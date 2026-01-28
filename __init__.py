@@ -188,30 +188,75 @@ class CambridgeFetcher:
 
     def _parse_audio(self, entry) -> Dict[str, str]:
         audio = {}
-        # typical structure: span.dpron-i contains span.region and [data-src-mp3]
-        for pron in entry.select("span.dpron-i"):
-            region = self._text(pron.select_one("span.region"))
-            region_key = region.lower() if region else None
-            src_el = pron.select_one("[data-src-mp3]") or pron.select_one("[data-src-ogg]")
-            url = None
-            if src_el:
-                url = src_el.get("data-src-mp3") or src_el.get("data-src-ogg")
-            if region_key and url:
-                audio[region_key] = url
-        # fallback without region labels
+        # Cambridge меняет вёрстку; соберём ссылки из нескольких вариантов.
+        candidates = []
+        candidates.extend(entry.select("[data-src-mp3], [data-src-ogg]"))
+        candidates.extend(entry.select("source[src], audio[src], audio source[src]"))
+        candidates.extend(entry.select("a[href*='/media/']"))
+
+        for tag in candidates:
+            url = (
+                tag.get("data-src-mp3")
+                or tag.get("data-src-ogg")
+                or tag.get("src")
+                or tag.get("href")
+            )
+            if not url:
+                continue
+            if not re.search(r"\.mp3|\.ogg", url, re.IGNORECASE):
+                continue
+            region_key = self._find_region(tag)
+            # сохраняем первый вариант для региона; если регион не найден — кладём как default
+            key = region_key or "default"
+            if key not in audio:
+                audio[key] = url
+
+        # fallback: первая попавшаяся data-src-mp3
         if not audio:
             src = entry.select_one("[data-src-mp3]")
             if src:
                 url = src.get("data-src-mp3")
                 if url:
-                    audio["us"] = url
+                    audio["default"] = url
         return audio
 
+    def _find_region(self, tag) -> Optional[str]:
+        """Пытается вычислить регион (us/uk) исходя из ближайших .region или классов."""
+        parent = tag
+        for _ in range(5):
+            region_el = parent.select_one(".region, .dregion") if hasattr(parent, "select_one") else None
+            if region_el:
+                txt = self._text(region_el).lower()
+                if "us" in txt:
+                    return "us"
+                if "uk" in txt:
+                    return "uk"
+            if not getattr(parent, "parent", None):
+                break
+            parent = parent.parent
+        classes = " ".join(tag.get("class", [])).lower()
+        if "us" in classes:
+            return "us"
+        if "uk" in classes:
+            return "uk"
+        return None
+
     def _parse_picture(self, entry) -> Optional[str]:
-        # Cambridge редко, но даёт иллюстрации в img-thumb
-        img = entry.select_one("amp-img.img-thumb") or entry.select_one("img.img-thumb")
-        if img:
-            return img.get("src") or img.get("data-src")
+        # Cambridge иногда хранит картинки в img[data-src] или img[src] с путём /media/
+        for img in entry.select("img, source, picture source"):
+            src = img.get("data-src") or img.get("srcset") or img.get("src")
+            if not src:
+                continue
+            # srcset может содержать несколько ссылок через запятую — берём первую
+            src = src.split(",")[0].split()[0]
+            if any(ext in src.lower() for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp")) and "/media/" in src:
+                return src
+        # amp-img fallback
+        amp = entry.select_one("amp-img")
+        if amp:
+            src = amp.get("data-src") or amp.get("src")
+            if src:
+                return src
         return None
 
 
@@ -222,6 +267,8 @@ def download_to_media(url: str) -> Tuple[str, str]:
         raise RuntimeError("Модуль requests не найден. Установи requests в окружение Anki.")
     if url.startswith("//"):
         url = "https:" + url
+    if url.startswith("/"):
+        url = "https://dictionary.cambridge.org" + url
     resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=20)
     resp.raise_for_status()
     # derive filename
@@ -248,13 +295,11 @@ class FetchDialog(QDialog):
         self.sense_list = QListWidget()
         self.preview = QTextEdit()
         self.preview.setReadOnly(True)
+        self.edit_btn = QPushButton("Insert & Edit")
         self.insert_btn = QPushButton("Insert")
 
         self.ntype_combo = QComboBox()
         self.deck_combo = QComboBox()
-        self.fill_current_cb = QCheckBox("Использовать текущую выбранную колоду/тип")
-        use_current = self.cfg.get("deck") is None and self.cfg.get("note_type") is None
-        self.fill_current_cb.setChecked(use_current)
 
         self._populate_models()
 
@@ -268,40 +313,78 @@ class FetchDialog(QDialog):
         combos.addWidget(self.ntype_combo)
         combos.addWidget(QLabel("Deck:"))
         combos.addWidget(self.deck_combo)
-        combos.addWidget(self.fill_current_cb)
 
         body = QHBoxLayout()
         body.addWidget(self.sense_list, 2)
         body.addWidget(self.preview, 3)
 
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.edit_btn)
+        buttons.addWidget(self.insert_btn)
+
         main = QVBoxLayout()
         main.addLayout(top)
         main.addLayout(combos)
         main.addLayout(body)
-        main.addWidget(self.insert_btn)
+        main.addLayout(buttons)
         self.setLayout(main)
 
         # signals
         self.fetch_btn.clicked.connect(self.on_fetch)
         self.sense_list.currentRowChanged.connect(self.on_select)
         self.insert_btn.clicked.connect(lambda: self.on_insert(open_editor=False))
+        self.edit_btn.clicked.connect(lambda: self.on_insert(open_editor=True))
         self.sense_list.itemDoubleClicked.connect(lambda _: self.on_insert(open_editor=True))
+        self.ntype_combo.currentTextChanged.connect(self._remember_selection)
+        self.deck_combo.currentTextChanged.connect(self._remember_selection)
 
     # ---------- UI helpers ----------
     def _populate_models(self):
+        # reload config to pick up persisted selections
+        self.cfg = get_config()
         col = mw.col
         # note types
         self.ntype_combo.clear()
         models = col.models.allNames()
         self.ntype_combo.addItems(models)
-        if self.cfg.get("note_type") in models:
-            self.ntype_combo.setCurrentText(self.cfg["note_type"])
+        cfg_model = (self.cfg.get("note_type") or "").strip()
+        if cfg_model:
+            idx = self.ntype_combo.findText(cfg_model, Qt.MatchFixedString)
+            if idx == -1:
+                for i, name in enumerate(models):
+                    if name.lower() == cfg_model.lower():
+                        idx = i
+                        break
+            if idx != -1:
+                self.ntype_combo.setCurrentIndex(idx)
+        elif models:
+            self.ntype_combo.setCurrentIndex(0)
         # decks
         self.deck_combo.clear()
         decks = list(col.decks.allNames())
         self.deck_combo.addItems(decks)
-        if self.cfg.get("deck") in decks:
-            self.deck_combo.setCurrentText(self.cfg["deck"])
+        cfg_deck = (self.cfg.get("deck") or "").strip()
+        if cfg_deck:
+            idx = self.deck_combo.findText(cfg_deck, Qt.MatchFixedString)
+            if idx == -1:
+                for i, name in enumerate(decks):
+                    if name.lower() == cfg_deck.lower():
+                        idx = i
+                        break
+            if idx != -1:
+                self.deck_combo.setCurrentIndex(idx)
+        elif decks:
+            self.deck_combo.setCurrentIndex(0)
+
+    def _remember_selection(self, *_):
+        if not self.cfg.get("remember_last", True):
+            return
+        save_config(
+            {
+                "note_type": self.ntype_combo.currentText(),
+                "deck": self.deck_combo.currentText(),
+            }
+        )
 
     def on_fetch(self):
         word = self.word_edit.text().strip()
@@ -347,18 +430,13 @@ class FetchDialog(QDialog):
         sense = self.senses[row]
         col = mw.col
 
-        # resolve model & deck
-        if self.fill_current_cb.isChecked():
-            model = col.models.current()
-            deck_id = col.decks.current()["id"]
-            deck_name = col.decks.name(deck_id)
-        else:
-            model_name = self.ntype_combo.currentText()
-            model = col.models.byName(model_name)
-            deck_name = self.deck_combo.currentText()
-            deck_id = col.decks.id(deck_name)
-            col.decks.select(deck_id)
-            col.models.setCurrent(model)
+        # resolve model & deck from user choices
+        model_name = self.ntype_combo.currentText()
+        model = col.models.byName(model_name)
+        deck_name = self.deck_combo.currentText()
+        deck_id = col.decks.id(deck_name)
+        col.decks.select(deck_id)
+        col.models.setCurrent(model)
 
         note = col.newNote(model)
         fmap = self.cfg["field_map"]
@@ -418,6 +496,7 @@ class FetchDialog(QDialog):
             except TypeError:
                 col.addNote(note)
                 added = True
+
         if self.cfg.get("remember_last", True):
             save_config({"note_type": model["name"], "deck": deck_name})
         mw.reset()
@@ -425,10 +504,21 @@ class FetchDialog(QDialog):
         if open_editor:
             try:
                 browser = dialogs.open("Browser", mw)
+                query = f"nid:{note.id}"
                 if hasattr(browser, "search_for_nids"):
                     browser.search_for_nids([note.id])
                 else:
-                    browser.onSearch(f"nid:{note.id}")
+                    # set search text if possible
+                    try:
+                        browser.form.searchEdit.lineEdit().setText(query)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    if hasattr(browser, "onSearchActivated"):
+                        browser.onSearchActivated()
+                    elif hasattr(browser, "onSearch"):
+                        browser.onSearch()
+                    elif hasattr(browser, "search"):
+                        browser.search()
                 browser.activateWindow()
             except Exception:
                 traceback.print_exc()
@@ -438,9 +528,17 @@ class FetchDialog(QDialog):
         for pref in self.cfg.get("dialect_priority", []):
             if pref in audio_map:
                 return audio_map[pref]
+        # fallback на default или первое значение
+        if "default" in audio_map:
+            return audio_map["default"]
         if audio_map:
             return next(iter(audio_map.values()))
         return None
+
+    def closeEvent(self, event):  # type: ignore[override]
+        # страхуемся: сохраняем выбранные тип и колоду даже если сигналы не сработали
+        self._remember_selection()
+        super().closeEvent(event)
 
 
 # ----------------------------- Menu hook ------------------------------------
