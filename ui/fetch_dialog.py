@@ -34,7 +34,7 @@ class FetchDialog(QDialog):
 
         # widgets
         self.word_edit = QLineEdit()
-        self.word_edit.setPlaceholderText("Введите слово...")
+        self.word_edit.setPlaceholderText("Enter a word…")
         self.fetch_btn = QPushButton("Fetch")
         self.sense_list = QListWidget()
         self.preview = QTextEdit()
@@ -51,7 +51,7 @@ class FetchDialog(QDialog):
         top = QHBoxLayout()
         top.addWidget(QLabel("Word:"))
         top.addWidget(self.word_edit)
-        top.addWidget(QLabel("Источник:"))
+        top.addWidget(QLabel("Source:"))
         top.addWidget(self.source_combo)
         top.addWidget(self.fetch_btn)
 
@@ -159,17 +159,17 @@ class FetchDialog(QDialog):
     def on_fetch(self):
         word = self.word_edit.text().strip()
         if not word:
-            showWarning("Введите слово.")
+            showWarning("Enter a word first.")
             return
         fetcher = self._current_fetcher()
         try:
             senses = fetcher.fetch(word)
         except Exception as e:
-            showWarning(f"Ошибка загрузки: {e}")
+            showWarning(f"Fetch error: {e}")
             traceback.print_exc()
             return
         if not senses:
-            showInfo("Не удалось найти определения.")
+            showInfo("No definitions found.")
             return
         self.senses = senses
         self.sense_list.clear()
@@ -196,7 +196,7 @@ class FetchDialog(QDialog):
     def on_insert(self, open_editor: bool = False):
         row = self.sense_list.currentRow()
         if row < 0 or row >= len(self.senses):
-            showWarning("Сначала выбери значение.")
+            showWarning("Select a sense first.")
             return
         sense = self.senses[row]
         col = mw.col
@@ -212,14 +212,22 @@ class FetchDialog(QDialog):
         note = col.newNote(model)
         fmap: Dict[str, str] = self.cfg["field_map"]
 
-        def set_field(key: str, value: str):
-            field_name = fmap.get(key)
-            if field_name and field_name in note:
-                note[field_name] = value
-
-        set_field("word", self.word_edit.text().strip())
+        def set_field(key: str, value: str, alt_names: Optional[list[str]] = None):
+            alt_names = alt_names or []
+            candidates = []
+            # primary from config
+            if fmap.get(key):
+                candidates.append(fmap[key])
+            # provided fallbacks
+            candidates.extend([n for n in alt_names if n])
+            # apply to first existing field name(s)
+            for name in candidates:
+                if name in note:
+                    note[name] = value
+                    # continue to next candidate to allow multiple targets (Word + Front)
+        set_field("word", self.word_edit.text().strip(), alt_names=["Front", "Ans"])
         set_field("definition", sense.definition)
-        set_field("examples", "<br>".join(sense.examples[: self.cfg["max_examples"]]))
+        set_field("examples", "<br>".join(sense.examples[: self.cfg["max_examples"]]), alt_names=["Example"])
         set_field("synonyms", ", ".join(sense.synonyms[: self.cfg["max_synonyms"]]))
 
         # audio
@@ -230,7 +238,7 @@ class FetchDialog(QDialog):
                 filename, _ = download_to_media(audio_url)
                 audio_tag = f"[sound:{filename}]"
             except Exception as e:
-                showWarning(f"Аудио не удалось скачать: {e}")
+                showWarning(f"Audio download failed: {e}")
         set_field("audio", audio_tag)
 
         # picture
@@ -240,7 +248,7 @@ class FetchDialog(QDialog):
                 fname, _ = download_to_media(sense.picture_url)
                 pic_tag = f'<img src=\"{fname}\">'
             except Exception as e:
-                showWarning(f"Картинку не удалось скачать: {e}")
+                showWarning(f"Image download failed: {e}")
         set_field("picture", pic_tag)
 
         # ensure deck id set on note for older API
@@ -271,7 +279,7 @@ class FetchDialog(QDialog):
         if self.cfg.get("remember_last", True):
             save_config({"note_type": model["name"], "deck": deck_name, "source": self.source_combo.currentData()})
         mw.reset()
-        tooltip("Нота добавлена.", parent=self)
+        tooltip("Note added.", parent=self)
         if open_editor:
             self._open_browser(note.id)
         self.accept()

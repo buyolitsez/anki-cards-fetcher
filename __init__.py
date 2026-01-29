@@ -1,10 +1,10 @@
 """
-Cambridge / Wiktionary Fetcher: заполняет карточку Anki из выбранного словаря.
+Cambridge / Wiktionary Fetcher: fills Anki notes from the chosen dictionary.
 
-Основной поток:
-- меню Tools → Cambridge Fetch (можно назначить хоткей в Anki)
-- диалог: ввести слово → Fetch → выбрать значение → Insert
-- создаётся новая нота указанного типа, поля заполняются по мэппингу.
+Flow:
+- Tools → Cambridge Fetch (hotkey Ctrl+Shift+C)
+- Enter a word → Fetch → choose a sense → Insert / Insert & Edit
+- A new note is created with mapped fields (definition, examples, synonyms, audio, picture).
 """
 
 from __future__ import annotations
@@ -32,51 +32,14 @@ def open_settings_dialog():
 
 def on_main_window_ready(mw_obj=None):
     wnd = mw_obj or mw
-    action = QAction("Cambridge Fetch", wnd)
+    action = QAction("Dictionary Fetch (Cambridge/Wiktionary)", wnd)
     action.setShortcut(QKeySequence("Ctrl+Shift+C"))
     action.triggered.connect(open_dialog)
     wnd.form.menuTools.addAction(action)
 
-    settings_action = QAction("Cambridge Fetch — настройки", wnd)
+    settings_action = QAction("Dictionary Fetch — Settings", wnd)
     settings_action.triggered.connect(open_settings_dialog)
     wnd.form.menuTools.addAction(settings_action)
-
-
-def add_toolbar_link(*args):
-    """
-    Добавляем кнопку в верхний тулбар Anki.
-    Хук сигнатуры менялись: иногда передают (links, toolbar), иногда только toolbar.
-    """
-    try:
-        links = None
-        toolbar = None
-        if len(args) == 1:
-            toolbar = args[0]
-            links = getattr(toolbar, "links", None)
-        elif len(args) >= 2:
-            links, toolbar = args[0], args[1]
-        if links is None:
-            return
-        # Anki 23+ may use ToolbarLink dataclass; older uses tuple
-        link_obj = None
-        try:
-            from aqt.toolbar import ToolbarLink  # type: ignore
-            link_obj = ToolbarLink(
-                name="cambridge_fetch",
-                label="Cambridge",
-                tooltip="Открыть Cambridge Fetch",
-                icon=None,
-            )
-        except Exception:
-            link_obj = ("cambridge_fetch", "Cambridge")
-        links.append(link_obj)
-    except Exception:
-        traceback.print_exc()
-
-
-def handle_toolbar_link(link, toolbar):
-    if link == "cambridge_fetch":
-        open_dialog()
 
 
 # Hooks & config wiring (handle different Anki API shapes)
@@ -88,14 +51,6 @@ else:
         on_main_window_ready(mw)
     except Exception:
         traceback.print_exc()
-if hasattr(gui_hooks, "top_toolbar_did_redraw"):
-    gui_hooks.top_toolbar_did_redraw.append(add_toolbar_link)
-if hasattr(gui_hooks, "toolbar_did_redraw"):
-    gui_hooks.toolbar_did_redraw.append(add_toolbar_link)
-if hasattr(gui_hooks, "toolbar_did_receive_link"):
-    gui_hooks.toolbar_did_receive_link.append(handle_toolbar_link)
-if hasattr(gui_hooks, "top_toolbar_did_receive_link"):
-    gui_hooks.top_toolbar_did_receive_link.append(handle_toolbar_link)
 
 defaults_attr = getattr(mw.addonManager, "addonConfigDefaults", None)
 if isinstance(defaults_attr, dict):

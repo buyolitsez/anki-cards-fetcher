@@ -19,3 +19,23 @@
 [wiktionary] lang_section nodes: 3
 [wiktionary] senses parsed: 7, synonyms: 11
 [wiktionary] senses found: 7
+[wiktionary] fetch 'бонмо' -> https://ru.wiktionary.org/wiki/%D0%B1%D0%BE%D0%BD%D0%BC%D0%BE
+[wiktionary] status 200, len=91805
+[wiktionary] lang_section nodes: 5
+[wiktionary] senses parsed: 1, synonyms: 9
+[wiktionary] senses found: 1
+[wiktionary] fetch 'бонмо' -> https://ru.wiktionary.org/wiki/%D0%B1%D0%BE%D0%BD%D0%BC%D0%BE
+[wiktionary] status 200, len=91805
+[wiktionary] lang_section nodes: 5
+[wiktionary] senses parsed: 1, synonyms: 9
+[wiktionary] senses found: 1
+[wiktionary] fetch 'бонмо' -> https://ru.wiktionary.org/wiki/%D0%B1%D0%BE%D0%BD%D0%BC%D0%BE
+[wiktionary] status 200, len=91805
+[wiktionary] lang_section nodes: 5
+[wiktionary] senses parsed: 1, synonyms: 9
+[wiktionary] senses found: 1
+[wiktionary] fetch 'бонмо' -> https://ru.wiktionary.org/wiki/%D0%B1%D0%BE%D0%BD%D0%BC%D0%BE
+[wiktionary] status 200, len=91805
+[wiktionary] lang_section nodes: 5
+[wiktionary] senses parsed: 1, synonyms: 9
+[wiktionary] senses found: 1

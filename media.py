@@ -26,7 +26,7 @@ def download_to_media(url: str) -> Tuple[str, str]:
     """
     requests = _requests()
     if not requests:
-        raise RuntimeError("Модуль requests не найден. Установи requests в окружение Anki.")
+        raise RuntimeError("requests module not found. Install requests in the Anki environment.")
     if url.startswith("//"):
         url = "https:" + url
     if url.startswith("/"):
@@ -45,7 +45,7 @@ def download_to_media(url: str) -> Tuple[str, str]:
     is_audio = ctype.startswith("audio/") or url.lower().endswith((".mp3", ".wav", ".ogg"))
     is_image = ctype.startswith("image/") or url.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
     if not (is_audio or is_image or ctype == "application/octet-stream"):
-        raise RuntimeError(f"Ожидался файл audio/image, но пришёл {ctype or 'unknown'}")
+        raise RuntimeError(f"Expected audio/image file, got {ctype or 'unknown'}")
     # derive filename
     name = url.split("/")[-1].split("?")[0]
     # avoid collisions

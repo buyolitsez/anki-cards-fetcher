@@ -1,19 +1,24 @@
-# Cambridge Fetcher
+# Cambridge / Wiktionary Fetcher
 
-Tags: dictionary, Cambridge, lookup, audio, image, examples, synonyms, flashcards, English, note-creator
+Tags: dictionary, Cambridge, Wiktionary, audio, image, examples, synonyms, flashcards, English, Russian, note-creator
 
 ## Overview
-Cambridge Fetcher adds a toolbar button and shortcut (Ctrl+Shift+C) to create a new note from dictionary.cambridge.org with one click. It pulls definition, examples, synonyms, audio (UK/US order is configurable), and an image, then maps them into your Anki fields and deck.
+Fetch definitions into Anki from either Cambridge Dictionary (English) or ru.wiktionary.org (Russian). The add-on maps definition, examples, synonyms, audio (Cambridge only), and picture (Cambridge only) into your note fields.
 
 ## How to Use
-1) Click the “Tools → Cambridge Fetch” button on the top toolbar (or use Ctrl+Shift+C).  
-2) Type a word and press “Fetch”.  
-3) Choose the desired sense; preview shows definition, examples, synonyms, audio availability, and picture flag.  
-4) Press “Insert” (or double-click) to create the note; “Insert & Edit” opens it in the browser.  
-5) Settings: Add-ons → Cambridge Fetch → Config. Pick default note type, deck, whether to remember the last choice, and set audio dialect priority (UK > US or US > UK).
+1) Open **Tools → Dictionary Fetch (Cambridge/Wiktionary)** (hotkey `Ctrl+Shift+C`).  
+2) Enter a word, choose **Source** (Cambridge / Wiktionary), press **Fetch**.  
+3) Pick a sense from the list; preview shows what will be inserted.  
+4) Click **Insert** (or double-click a sense) to add the note; **Insert & Edit** opens it in the Browser.
+
+## Settings
+Open **Tools → Dictionary Fetch — Settings**. Configure:
+- Default note type and deck.
+- Remember last selections.
+- Default source.
+- Audio dialect priority for Cambridge (UK>US or US>UK).
 
 ## Implementation Notes
-- **Fetching and parsing**: Uses `requests` and `BeautifulSoup`. For each `div.entry`, it collects audio links from `data-src-mp3/ogg`, `source[src]`, `audio[src]`, and Cambridge media links; regions are inferred from nearby `.region/.dregion` text or CSS classes. Examples are gathered from `.examp`, `.dexamp`, `span.eg/deg`, and related selectors; synonyms from thesaurus and accordian blocks. Images come from `img/srcset/src` or `amp-img` pointing to `/media/` files.
-- **Field mapping**: `field_map` in config maps logical keys (`word`, `definition`, `examples`, `synonyms`, `audio`, `picture`) to your model fields. During insertion, the note is created with the chosen model/deck, then each mapped field is set. Audio and pictures are downloaded into the media collection; audio is inserted as `[sound:...]`, images as `<img src="...">`.
-
-
+- Uses `requests` + `BeautifulSoup`. Cambridge parser gathers audio from multiple attributes/buttons (including AMP) and images from `/media/` links. Wiktionary parser reads the “Значение”/“Синонимы” sections inside the Russian language block.
+- Field mapping (`config.json` / addon config) keys: `word`, `definition`, `examples`, `synonyms`, `audio`, `picture`.
+- Media files are downloaded into Anki’s collection; audio is inserted as `[sound:filename]`, images as `<img src="filename">`.

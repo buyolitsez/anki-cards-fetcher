@@ -37,9 +37,9 @@ class WiktionaryFetcher(BaseFetcher):
 
     def fetch(self, word: str) -> List[Sense]:
         if not requests:
-            raise RuntimeError("Модуль requests не найден. Установи requests в окружение Anki.")
+            raise RuntimeError("requests module not found. Install requests in the Anki environment.")
         if not BeautifulSoup:
-            raise RuntimeError("Модуль bs4 не найден. Установи beautifulsoup4 в окружение Anki.")
+            raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
 
         url = self.BASE.format(word=quote(word.strip()))
         log(f"[wiktionary] fetch '{word}' -> {url}")
@@ -50,7 +50,7 @@ class WiktionaryFetcher(BaseFetcher):
             log(f"[wiktionary] request failed: {e}")
             raise
         if resp.status_code >= 400:
-            raise RuntimeError(f"Wiktionary ответил {resp.status_code} для '{word}'.")
+            raise RuntimeError(f"Wiktionary returned {resp.status_code} for '{word}'.")
 
         soup = BeautifulSoup(resp.text, "html.parser")
         lang_section = self._language_section(soup, "Русский")

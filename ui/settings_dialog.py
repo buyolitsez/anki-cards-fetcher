@@ -11,7 +11,7 @@ from ..fetchers import get_fetchers
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Cambridge/Wiktionary — настройки")
+        self.setWindowTitle("Cambridge/Wiktionary — Settings")
         self.cfg = get_config()
         col = mw.col
 
@@ -48,7 +48,7 @@ class SettingsDialog(QDialog):
         self.source_combo.setCurrentIndex(idx)
 
         # remember last
-        self.remember_chk = QCheckBox("Запоминать последний выбор в диалоге")
+        self.remember_chk = QCheckBox("Remember last selections in dialog")
         self.remember_chk.setChecked(bool(self.cfg.get("remember_last", True)))
 
         # dialect priority radio
@@ -64,20 +64,20 @@ class SettingsDialog(QDialog):
             self.us_first.setChecked(True)
 
         # buttons
-        save_btn = QPushButton("Сохранить")
-        cancel_btn = QPushButton("Закрыть")
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Close")
         save_btn.clicked.connect(self.on_save)
         cancel_btn.clicked.connect(self.reject)
 
         form = QVBoxLayout()
-        form.addWidget(QLabel("Тип ноты по умолчанию:"))
+        form.addWidget(QLabel("Default note type:"))
         form.addWidget(self.ntype_combo)
-        form.addWidget(QLabel("Колода по умолчанию:"))
+        form.addWidget(QLabel("Default deck:"))
         form.addWidget(self.deck_combo)
-        form.addWidget(QLabel("Источник по умолчанию:"))
+        form.addWidget(QLabel("Default source:"))
         form.addWidget(self.source_combo)
         form.addWidget(self.remember_chk)
-        form.addWidget(QLabel("Приоритет озвучки (для Cambridge):"))
+        form.addWidget(QLabel("Audio dialect priority (Cambridge only):"))
         dialect_row = QHBoxLayout()
         dialect_row.addWidget(self.uk_first)
         dialect_row.addWidget(self.us_first)
