@@ -30,6 +30,7 @@ import os
 import re
 import traceback
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 try:
@@ -53,7 +54,9 @@ from aqt.qt import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QKeySequence,
     QPushButton,
+    QShortcut,
     QTextEdit,
     QVBoxLayout,
     Qt,
@@ -113,20 +116,91 @@ DEFAULT_CONFIG = {
     "max_synonyms": 4,
 }
 
+# add-on id helper (Anki sometimes needs explicit folder name)
+try:
+    ADDON_NAME = mw.addonManager.addonFromModule(__name__)
+except Exception:
+    ADDON_NAME = os.path.basename(os.path.dirname(__file__))
+ADDON_DIR = Path(os.path.dirname(__file__))
+META_PATH = ADDON_DIR / "meta.json"
+CONFIG_PATH = ADDON_DIR / "config.json"
+
 
 def get_config() -> Dict:
-    cfg = mw.addonManager.getConfig(__name__) or {}
-    # shallow merge with defaults
-    merged = json.loads(json.dumps(DEFAULT_CONFIG))
-    for k, v in cfg.items():
+    def _read_meta_config() -> Dict:
+        try:
+            with META_PATH.open("r", encoding="utf-8") as f:
+                meta = json.load(f)
+            if isinstance(meta, dict) and isinstance(meta.get("config"), dict):
+                return meta["config"]
+        except FileNotFoundError:
+            pass
+        except Exception:
+            traceback.print_exc()
+        return {}
+
+    def _read_config_json() -> Dict:
+        try:
+            with CONFIG_PATH.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except Exception:
+            traceback.print_exc()
+            return {}
+
+    stored = {}
+    try:
+        stored = mw.addonManager.getConfig(ADDON_NAME) or {}
+    except Exception:
+        traceback.print_exc()
+    if not stored:
+        stored = _read_meta_config()
+    if not stored:
+        stored = _read_config_json()
+
+    merged = json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy defaults
+    for k, v in stored.items():
         merged[k] = v
+    # ensure nested dict keeps defaults too
+    merged["field_map"] = {
+        **DEFAULT_CONFIG.get("field_map", {}),
+        **(stored.get("field_map") or {}),
+    }
     return merged
 
 
 def save_config(updates: Dict):
     cfg = get_config()
     cfg.update(updates)
-    mw.addonManager.writeConfig(__name__, cfg)
+    cfg["field_map"] = {
+        **DEFAULT_CONFIG.get("field_map", {}),
+        **(cfg.get("field_map") or {}),
+    }
+    try:
+        mw.addonManager.writeConfig(ADDON_NAME, cfg)
+    except Exception:
+        traceback.print_exc()
+    # Some Anki versions keep config in meta.json; mirror to be safe.
+    try:
+        meta = {}
+        if META_PATH.exists():
+            with META_PATH.open("r", encoding="utf-8") as f:
+                meta = json.load(f) or {}
+                if not isinstance(meta, dict):
+                    meta = {}
+        meta["config"] = cfg
+        with META_PATH.open("w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    except Exception:
+        traceback.print_exc()
+    # And keep a plain config.json as an extra fallback.
+    try:
+        with CONFIG_PATH.open("w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception:
+        traceback.print_exc()
 
 
 # ----------------------------- Fetch & Parse --------------------------------
@@ -159,16 +233,18 @@ class CambridgeFetcher:
                 definition = self._text(block.select_one("div.def.ddef_d.db"))
                 if not definition:
                     continue
-                examples = [
-                    self._text(ex)
-                    for ex in block.select("div.examp.dexamp span.eg.deg")
-                    if self._text(ex)
-                ]
-                synonyms = [
-                    self._text(a)
-                    for a in block.select("div.thesref a")
-                    if self._text(a)
-                ]
+                examples: List[str] = []
+                for ex in block.select(".examp, .dexamp, span.eg, span.deg, span.xref span.eg"):
+                    text = self._text(ex)
+                    if text and text not in examples:
+                        examples.append(text)
+                synonyms: List[str] = []
+                for a in block.select(
+                    "div.thesref a, div.daccord a, div.daccordLink a, .synonyms a, .daccord-h a"
+                ):
+                    text = self._text(a)
+                    if text and text not in synonyms:
+                        synonyms.append(text)
                 senses.append(
                     CambridgeSense(
                         definition=definition,
@@ -340,6 +416,10 @@ class FetchDialog(QDialog):
 
     # ---------- UI helpers ----------
     def _populate_models(self):
+        # Qt6 renamed MatchFixedString -> MatchFlag.MatchExactly; keep compat with Qt5
+        match_fixed = getattr(Qt, "MatchFixedString", None)
+        if not match_fixed and hasattr(Qt, "MatchFlag"):
+            match_fixed = getattr(Qt.MatchFlag, "MatchExactly", 0)
         # reload config to pick up persisted selections
         self.cfg = get_config()
         col = mw.col
@@ -349,7 +429,7 @@ class FetchDialog(QDialog):
         self.ntype_combo.addItems(models)
         cfg_model = (self.cfg.get("note_type") or "").strip()
         if cfg_model:
-            idx = self.ntype_combo.findText(cfg_model, Qt.MatchFixedString)
+            idx = self.ntype_combo.findText(cfg_model, match_fixed)
             if idx == -1:
                 for i, name in enumerate(models):
                     if name.lower() == cfg_model.lower():
@@ -365,7 +445,7 @@ class FetchDialog(QDialog):
         self.deck_combo.addItems(decks)
         cfg_deck = (self.cfg.get("deck") or "").strip()
         if cfg_deck:
-            idx = self.deck_combo.findText(cfg_deck, Qt.MatchFixedString)
+            idx = self.deck_combo.findText(cfg_deck, match_fixed)
             if idx == -1:
                 for i, name in enumerate(decks):
                     if name.lower() == cfg_deck.lower():
@@ -541,30 +621,182 @@ class FetchDialog(QDialog):
         super().closeEvent(event)
 
 
+# ----------------------------- Settings dialog ------------------------------
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Cambridge Fetch — настройки")
+        self.cfg = get_config()
+        col = mw.col
+
+        # note type selector
+        self.ntype_combo = QComboBox()
+        self.ntype_combo.addItem("Авто (первый в списке)", "")
+        for name in col.models.allNames():
+            self.ntype_combo.addItem(name, name)
+        cfg_model = (self.cfg.get("note_type") or "").strip()
+        idx = self.ntype_combo.findData(cfg_model)
+        if idx == -1:
+            idx = 0
+        self.ntype_combo.setCurrentIndex(idx)
+
+        # deck selector
+        self.deck_combo = QComboBox()
+        self.deck_combo.addItem("Текущая выбранная", "")
+        for name in col.decks.allNames():
+            self.deck_combo.addItem(name, name)
+        cfg_deck = (self.cfg.get("deck") or "").strip()
+        idx = self.deck_combo.findData(cfg_deck)
+        if idx == -1:
+            idx = 0
+        self.deck_combo.setCurrentIndex(idx)
+
+        # remember last
+        self.remember_chk = QCheckBox("Запоминать последний выбор в диалоге")
+        self.remember_chk.setChecked(bool(self.cfg.get("remember_last", True)))
+
+        # dialect priority radio
+        self.uk_first = QCheckBox("UK > US")
+        self.us_first = QCheckBox("US > UK")
+        # behave like radio: allow only one checked
+        self.uk_first.stateChanged.connect(lambda _: self._sync_dialect_checks("uk"))
+        self.us_first.stateChanged.connect(lambda _: self._sync_dialect_checks("us"))
+        current_dialect = [d.lower() for d in self.cfg.get("dialect_priority", [])]
+        if current_dialect[:2] == ["uk", "us"]:
+            self.uk_first.setChecked(True)
+        else:
+            self.us_first.setChecked(True)
+
+        # buttons
+        save_btn = QPushButton("Сохранить")
+        cancel_btn = QPushButton("Закрыть")
+        save_btn.clicked.connect(self.on_save)
+        cancel_btn.clicked.connect(self.reject)
+
+        form = QVBoxLayout()
+        form.addWidget(QLabel("Тип ноты по умолчанию:"))
+        form.addWidget(self.ntype_combo)
+        form.addWidget(QLabel("Колода по умолчанию:"))
+        form.addWidget(self.deck_combo)
+        form.addWidget(self.remember_chk)
+        form.addWidget(QLabel("Приоритет озвучки:"))
+        dialect_row = QHBoxLayout()
+        dialect_row.addWidget(self.uk_first)
+        dialect_row.addWidget(self.us_first)
+        form.addLayout(dialect_row)
+
+        buttons = QHBoxLayout()
+        buttons.addWidget(save_btn)
+        buttons.addWidget(cancel_btn)
+        form.addLayout(buttons)
+        self.setLayout(form)
+
+    def _sync_dialect_checks(self, prefer: str):
+        if prefer == "uk":
+            self.us_first.blockSignals(True)
+            self.us_first.setChecked(False)
+            self.us_first.blockSignals(False)
+            if not self.uk_first.isChecked():
+                self.uk_first.setChecked(True)
+        else:
+            self.uk_first.blockSignals(True)
+            self.uk_first.setChecked(False)
+            self.uk_first.blockSignals(False)
+            if not self.us_first.isChecked():
+                self.us_first.setChecked(True)
+
+    def on_save(self):
+        note_type = self.ntype_combo.currentData() or None
+        deck = self.deck_combo.currentData() or None
+        dialect_priority = ["uk", "us"] if self.uk_first.isChecked() else ["us", "uk"]
+        save_config(
+            {
+                "note_type": note_type,
+                "deck": deck,
+                "remember_last": self.remember_chk.isChecked(),
+                "dialect_priority": dialect_priority,
+            }
+        )
+        tooltip("Настройки сохранены.", parent=self)
+        self.accept()
+
+
 # ----------------------------- Menu hook ------------------------------------
 def open_dialog():
     dlg = FetchDialog(mw)
     dlg.exec()
 
 
+def open_settings_dialog():
+    dlg = SettingsDialog(mw)
+    dlg.exec()
+
+
 def on_main_window_ready(mw_obj=None):
     wnd = mw_obj or mw
     action = QAction("Cambridge Fetch", wnd)
+    action.setShortcut(QKeySequence("Ctrl+Shift+C"))
     action.triggered.connect(open_dialog)
     wnd.form.menuTools.addAction(action)
 
 
+def add_toolbar_link(*args):
+    """
+    Добавляем кнопку в верхний тулбар Anki.
+    Хук сигнатуры менялись: иногда передают (links, toolbar), иногда только toolbar.
+    """
+    try:
+        links = None
+        toolbar = None
+        if len(args) == 1:
+            toolbar = args[0]
+            links = getattr(toolbar, "links", None)
+        elif len(args) >= 2:
+            links, toolbar = args[0], args[1]
+        if links is None:
+            return
+        # Anki 23+ may use ToolbarLink dataclass; older uses tuple
+        link_obj = None
+        try:
+            from aqt.toolbar import ToolbarLink  # type: ignore
+            link_obj = ToolbarLink(
+                name="cambridge_fetch",
+                label="Cambridge",
+                tooltip="Открыть Cambridge Fetch",
+                icon=None,
+            )
+        except Exception:
+            link_obj = ("cambridge_fetch", "Cambridge")
+        links.append(link_obj)
+    except Exception:
+        traceback.print_exc()
+
+
+def handle_toolbar_link(link, toolbar):
+    if link == "cambridge_fetch":
+        open_dialog()
+
+
 # Hooks & config wiring (handle different Anki API shapes)
+if hasattr(gui_hooks, "top_toolbar_did_redraw"):
+    gui_hooks.top_toolbar_did_redraw.append(add_toolbar_link)
+if hasattr(gui_hooks, "toolbar_did_redraw"):
+    gui_hooks.toolbar_did_redraw.append(add_toolbar_link)
+if hasattr(gui_hooks, "toolbar_did_receive_link"):
+    gui_hooks.toolbar_did_receive_link.append(handle_toolbar_link)
+if hasattr(gui_hooks, "top_toolbar_did_receive_link"):
+    gui_hooks.top_toolbar_did_receive_link.append(handle_toolbar_link)
+
 defaults_attr = getattr(mw.addonManager, "addonConfigDefaults", None)
 if isinstance(defaults_attr, dict):
-    defaults_attr[__name__] = DEFAULT_CONFIG
+    defaults_attr[ADDON_NAME] = DEFAULT_CONFIG
 elif callable(defaults_attr):
     try:
-        defaults_attr(__name__, DEFAULT_CONFIG)  # type: ignore[arg-type]
+        defaults_attr(ADDON_NAME, DEFAULT_CONFIG)  # type: ignore[arg-type]
     except Exception:
         pass
 elif hasattr(mw.addonManager, "setConfigDefaults"):
-    mw.addonManager.setConfigDefaults(__name__, DEFAULT_CONFIG)
+    mw.addonManager.setConfigDefaults(ADDON_NAME, DEFAULT_CONFIG)
 
-mw.addonManager.setConfigAction(__name__, lambda: open_dialog())
+mw.addonManager.setConfigAction(ADDON_NAME, lambda: open_settings_dialog())
 gui_hooks.main_window_did_init.append(on_main_window_ready)
