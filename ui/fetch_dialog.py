@@ -222,7 +222,9 @@ class FetchDialog(QDialog):
 
         set_field("word", self.word_edit.text().strip())
         set_field("definition", sense.definition)
-        set_field("examples", "<br>".join(sense.examples[: self.cfg["max_examples"]]))
+        ex = sense.examples[: self.cfg["max_examples"]]
+        numbered = [f"{i+1}. {txt}" for i, txt in enumerate(ex)]
+        set_field("examples", "<br>".join(numbered))
         set_field("synonyms", ", ".join(sense.synonyms[: self.cfg["max_synonyms"]]))
 
         # audio

@@ -1,11 +1,12 @@
 {
-  "note_type": "мои слова",
-  "deck": "русский",
+  "note_type": "english ivantea kolya",
+  "deck": "english",
   "remember_last": true,
   "field_map": {
     "word": [
       "Word",
-      "Front"
+      "Front",
+      "Ans"
     ],
     "definition": [
       "Definition"
@@ -30,5 +31,5 @@
   ],
   "max_examples": 2,
   "max_synonyms": 4,
-  "source": "wiktionary"
+  "source": "cambridge"
 }

@@ -44,3 +44,13 @@
 [wiktionary] lang_section nodes: 3
 [wiktionary] senses parsed: 2, synonyms: 0
 [wiktionary] senses found: 2
+[wiktionary] fetch 'дом' -> https://ru.wiktionary.org/wiki/%D0%B4%D0%BE%D0%BC
+[wiktionary] status 200, len=350776
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 7, synonyms: 11
+[wiktionary] senses found: 7
+[wiktionary] fetch 'дом' -> https://ru.wiktionary.org/wiki/%D0%B4%D0%BE%D0%BC
+[wiktionary] status 200, len=350776
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 7, synonyms: 11
+[wiktionary] senses found: 7

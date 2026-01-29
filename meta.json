@@ -1,1 +1,37 @@
-{"config": {"deck": "\u0440\u0443\u0441\u0441\u043a\u0438\u0439", "dialect_priority": ["uk", "us"], "field_map": {"audio": ["Audio"], "definition": ["Definition"], "examples": ["Examples", "Example"], "picture": ["Picture"], "synonyms": ["Synonyms"], "word": ["Word", "Front", "Ans"]}, "max_examples": 2, "max_synonyms": 4, "note_type": "\u043c\u043e\u0438 \u0441\u043b\u043e\u0432\u0430", "remember_last": true, "source": "wiktionary"}}
+{
+  "config": {
+    "note_type": "english ivantea kolya",
+    "deck": "english",
+    "remember_last": true,
+    "field_map": {
+      "word": [
+        "Word",
+        "Front",
+        "Ans"
+      ],
+      "definition": [
+        "Definition"
+      ],
+      "examples": [
+        "Examples",
+        "Example"
+      ],
+      "synonyms": [
+        "Synonyms"
+      ],
+      "audio": [
+        "Audio"
+      ],
+      "picture": [
+        "Picture"
+      ]
+    },
+    "dialect_priority": [
+      "uk",
+      "us"
+    ],
+    "max_examples": 2,
+    "max_synonyms": 4,
+    "source": "cambridge"
+  }
+}
