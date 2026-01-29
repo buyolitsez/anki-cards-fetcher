@@ -15,5 +15,6 @@
     "us"
   ],
   "max_examples": 2,
-  "max_synonyms": 4
+  "max_synonyms": 4,
+  "source": "cambridge"
 }
