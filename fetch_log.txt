@@ -1,0 +1,21 @@
+[wiktionary] fetch 'кот' -> https://ru.wiktionary.org/wiki/%D0%BA%D0%BE%D1%82
+[wiktionary] status 200, len=275571
+[wiktionary] lang_section nodes: 0
+[wiktionary] fetch 'дом' -> https://ru.wiktionary.org/wiki/%D0%B4%D0%BE%D0%BC
+[wiktionary] status 200, len=350776
+[wiktionary] lang_section nodes: 0
+[wiktionary] fetch 'дом' -> https://ru.wiktionary.org/wiki/%D0%B4%D0%BE%D0%BC
+[wiktionary] status 200, len=350776
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses found: 0
+[wiktionary] fetch 'дом' -> https://ru.wiktionary.org/wiki/%D0%B4%D0%BE%D0%BC
+[wiktionary] status 200, len=350776
+[wiktionary] lang_section nodes: 3
+[wiktionary] fetch 'дом' -> https://ru.wiktionary.org/wiki/%D0%B4%D0%BE%D0%BC
+[wiktionary] status 200, len=350776
+[wiktionary] lang_section nodes: 3
+[wiktionary] fetch 'дом' -> https://ru.wiktionary.org/wiki/%D0%B4%D0%BE%D0%BC
+[wiktionary] status 200, len=350776
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 7, synonyms: 11
+[wiktionary] senses found: 7

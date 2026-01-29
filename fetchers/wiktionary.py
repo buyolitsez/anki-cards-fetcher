@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import List
 from urllib.parse import quote
+from pathlib import Path
 
 try:
     import requests
@@ -18,6 +19,16 @@ from ..media import USER_AGENT
 from ..models import Sense
 from .base import BaseFetcher
 
+LOG_PATH = Path(__file__).resolve().parent.parent / "fetch_log.txt"
+
+
+def log(line: str):
+    try:
+        with LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
 
 class WiktionaryFetcher(BaseFetcher):
     ID = "wiktionary"
@@ -31,40 +42,70 @@ class WiktionaryFetcher(BaseFetcher):
             raise RuntimeError("Модуль bs4 не найден. Установи beautifulsoup4 в окружение Anki.")
 
         url = self.BASE.format(word=quote(word.strip()))
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
+        log(f"[wiktionary] fetch '{word}' -> {url}")
+        try:
+            resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
+            log(f"[wiktionary] status {resp.status_code}, len={len(resp.text)}")
+        except Exception as e:
+            log(f"[wiktionary] request failed: {e}")
+            raise
         if resp.status_code >= 400:
             raise RuntimeError(f"Wiktionary ответил {resp.status_code} для '{word}'.")
 
         soup = BeautifulSoup(resp.text, "html.parser")
         lang_section = self._language_section(soup, "Русский")
+        log(f"[wiktionary] lang_section nodes: {len(lang_section) if lang_section else 0}")
         if not lang_section:
             return []
 
         senses = self._parse_senses(lang_section)
+        log(f"[wiktionary] senses found: {len(senses)}")
         return senses
 
     # ----------------------- helpers -----------------------
     def _language_section(self, soup, language: str):
-        """Возвращает список узлов между заголовком языка и следующим заголовком языка."""
-        headline = soup.find("span", id=language)
-        if not headline:
-            return []
-        h_tag = headline.find_parent(["h2", "h3"])
-        if not h_tag:
-            return []
-        nodes = []
-        for sib in h_tag.next_siblings:
-            name = getattr(sib, "name", None)
-            if name in ("h2", "h3"):
-                other = sib.find("span", {"class": "mw-headline"})
-                if other and other.get("id") not in (None, language):
-                    break
-            if isinstance(sib, str):
-                continue
-            nodes.append(sib)
-        return nodes
+        """Возвращает тег секции (section/h2 блок) для заданного языка."""
+        lang_cf = language.casefold()
 
-    def _parse_senses(self, nodes) -> List[Sense]:
+        # 1) parsoid section с aria-labelledby="Русский"
+        for sec in soup.find_all("section"):
+            aria = (sec.get("aria-labelledby") or "").casefold()
+            if lang_cf in aria or "русск" in aria:
+                return sec
+
+        # 2) классический h1/h2 с id или текстом Русский
+        headline = soup.find(id=language)
+        if not headline:
+            for span in soup.select(".mw-headline"):
+                text = (span.get_text(strip=True) or "").casefold()
+                sid = (span.get("id") or "").casefold()
+                if text == lang_cf or sid == lang_cf or "русск" in text:
+                    headline = span
+                    break
+        if not headline:
+            from urllib.parse import unquote
+
+            for tag in soup.find_all(id=True):
+                raw_id = tag.get("id", "")
+                if raw_id.startswith(".D"):
+                    decoded = unquote(raw_id.replace(".", "%"))
+                    if decoded.casefold() == lang_cf:
+                        headline = tag
+                        break
+        if not headline:
+            heads = [f"{(span.get('id') or '').strip()}|{(span.get_text(strip=True) or '')}" for span in soup.select('.mw-headline')][:10]
+            log("[wiktionary] headline not found; sample headlines: " + " || ".join(heads))
+            return None
+
+        h_tag = headline if headline.name in ("h1", "h2") else headline.find_parent(["h1", "h2"])
+        if not h_tag:
+            log("[wiktionary] h1/h2 parent not found")
+            return None
+
+        # оборачиваем в фиктивный объект с children для совместимости
+        return h_tag
+
+    def _parse_senses(self, lang_root) -> List[Sense]:
         senses: List[Sense] = []
         synonyms: List[str] = []
 
@@ -72,46 +113,53 @@ class WiktionaryFetcher(BaseFetcher):
             txt = re.sub(r"\[\d+\]", "", text)  # убираем сноски вида [1]
             return " ".join(txt.split())
 
+        if not lang_root:
+            return []
+
+        def sections_by_title(title: str):
+            title_l = title.lower()
+            for sec in lang_root.find_all("section"):
+                aria = (sec.get("aria-labelledby") or "").lower()
+                if title_l in aria:
+                    yield sec
+                    continue
+                head = sec.find(["h2", "h3", "h4", "h5", "h6"])
+                if head and (head.get_text(strip=True) or "").lower() == title_l:
+                    yield sec
+
+        def iter_section(title: str):
+            for sec in sections_by_title(title):
+                lst = sec.find(["ol", "ul"])
+                if lst:
+                    for li in lst.find_all("li", recursive=False):
+                        yield li
+
         # собрать определения
-        for i, node in enumerate(nodes):
-            if node.name and node.name.startswith("h") and self._headline_text(node) == "Значение":
-                # look ahead for list until next header
-                for nxt in nodes[i + 1 :]:
-                    nxt_name = getattr(nxt, "name", "")
-                    if nxt_name.startswith("h"):
-                        break
-                    if nxt.name in ("ol", "ul"):
-                        for li in nxt.find_all("li", recursive=False):
-                            raw = clean_txt(li.get_text(" ", strip=True))
-                            if not raw:
-                                continue
-                            definition, examples = self._split_examples(raw)
-                            senses.append(
-                                Sense(
-                                    definition=definition,
-                                    examples=examples,
-                                    synonyms=[],  # заполнится позже общим списком
-                                    pos=None,
-                                )
-                            )
-                        break
+        for li in iter_section("Значение"):
+            raw = clean_txt(li.get_text(" ", strip=True))
+            if not raw:
+                continue
+            definition, examples = self._split_examples(raw)
+            senses.append(
+                Sense(
+                    definition=definition,
+                    examples=examples,
+                    synonyms=[],  # заполнится позже общим списком
+                    pos=None,
+                )
+            )
+
         # собрать синонимы (общие для всех sense)
-        for i, node in enumerate(nodes):
-            if node.name and node.name.startswith("h") and self._headline_text(node) == "Синонимы":
-                for nxt in nodes[i + 1 :]:
-                    nxt_name = getattr(nxt, "name", "")
-                    if nxt_name.startswith("h"):
-                        break
-                    if nxt.name in ("ol", "ul"):
-                        for li in nxt.find_all("li", recursive=False):
-                            for a in li.find_all("a"):
-                                txt = clean_txt(a.get_text(" ", strip=True))
-                                if txt and txt not in synonyms:
-                                    synonyms.append(txt)
-                        break
+        for li in iter_section("Синонимы"):
+            for a in li.find_all("a"):
+                txt = clean_txt(a.get_text(" ", strip=True))
+                if txt and txt not in synonyms:
+                    synonyms.append(txt)
+
         if synonyms:
             for s in senses:
                 s.synonyms = synonyms[:]
+        log(f"[wiktionary] senses parsed: {len(senses)}, synonyms: {len(synonyms)}")
         return senses
 
     def _split_examples(self, raw: str):
