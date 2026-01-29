@@ -1,6 +1,6 @@
 {
-  "note_type": "english ivantea kolya",
-  "deck": "english",
+  "note_type": "мои слова",
+  "deck": "русский",
   "remember_last": true,
   "field_map": {
     "word": [
@@ -22,7 +22,8 @@
       "Audio"
     ],
     "picture": [
-      "Picture"
+      "Picture",
+      "Image"
     ]
   },
   "dialect_priority": [
@@ -31,5 +32,5 @@
   ],
   "max_examples": 2,
   "max_synonyms": 4,
-  "source": "cambridge"
+  "source": "wiktionary"
 }

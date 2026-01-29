@@ -3,7 +3,7 @@
 Tags: dictionary, Cambridge, Wiktionary, audio, image, examples, synonyms, flashcards, English, Russian, note-creator
 
 ## Overview
-Fetch definitions into Anki from either Cambridge Dictionary (English) or ru.wiktionary.org (Russian). The add-on maps definition, examples, synonyms, audio (Cambridge only), and picture (Cambridge only) into your note fields.
+Fetch definitions into Anki from either Cambridge Dictionary (English) or ru.wiktionary.org (Russian). The add-on maps definition, examples, synonyms, audio (Cambridge only), and pictures (Cambridge plus available Wiktionary images) into your note fields.
 
 ## How to Use
 1) Open **Tools → Dictionary Fetch (Cambridge/Wiktionary)** (hotkey `Ctrl+Shift+C`).  

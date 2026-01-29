@@ -59,7 +59,12 @@ class WiktionaryFetcher(BaseFetcher):
             return []
 
         senses = self._parse_senses(lang_section)
-        log(f"[wiktionary] senses found: {len(senses)}")
+        picture = self._extract_picture(lang_section)
+        if picture:
+            for s in senses:
+                if not s.picture_url:
+                    s.picture_url = picture
+        log(f"[wiktionary] senses found: {len(senses)}, picture: {bool(picture)}")
         return senses
 
     # ----------------------- helpers -----------------------
@@ -161,6 +166,29 @@ class WiktionaryFetcher(BaseFetcher):
                 s.synonyms = synonyms[:]
         log(f"[wiktionary] senses parsed: {len(senses)}, synonyms: {len(synonyms)}")
         return senses
+
+    def _extract_picture(self, lang_root) -> Optional[str]:
+        """Pick a representative image from the language section, if any."""
+        if not lang_root:
+            return None
+        # Prefer thumbnails of photos/illustrations, ignore icons/logos
+        for img in lang_root.find_all("img"):
+            src = img.get("src") or ""
+            if not src:
+                continue
+            if any(bad in src.lower() for bad in ("icon", "logo", "svg", "favicon")):
+                continue
+            if "upload.wikimedia.org" not in src:
+                continue
+            try:
+                width = int(img.get("data-file-width") or img.get("width") or 0)
+                height = int(img.get("data-file-height") or img.get("height") or 0)
+            except Exception:
+                width = height = 0
+            if width < 80 or height < 80:
+                continue
+            return src
+        return None
 
     def _split_examples(self, raw: str):
         """Викисловарь пишет примеры после символа ◆"""
