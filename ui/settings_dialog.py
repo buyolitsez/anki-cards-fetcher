@@ -1,7 +1,16 @@
 from __future__ import annotations
 
 from aqt import mw
-from aqt.qt import QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from aqt.qt import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+)
 from aqt.utils import tooltip
 
 from ..config import DEFAULT_CONFIG, get_config, save_config
@@ -83,6 +92,26 @@ class SettingsDialog(QDialog):
         dialect_row.addWidget(self.us_first)
         form.addLayout(dialect_row)
 
+        # field mappings
+        form.addWidget(QLabel("Field mapping (comma-separated per logical key):"))
+        self.map_edits = {}
+        for key, label in [
+            ("word", "Word fields"),
+            ("definition", "Definition fields"),
+            ("examples", "Examples fields"),
+            ("synonyms", "Synonyms fields"),
+            ("audio", "Audio fields"),
+            ("picture", "Picture fields"),
+        ]:
+            form.addWidget(QLabel(label + ":"))
+            edit = QLineEdit()
+            vals = self.cfg.get("field_map", {}).get(key, [])
+            if isinstance(vals, str):
+                vals = [v.strip() for v in vals.split(",") if v.strip()]
+            edit.setText(", ".join(vals))
+            self.map_edits[key] = edit
+            form.addWidget(edit)
+
         buttons = QHBoxLayout()
         buttons.addWidget(save_btn)
         buttons.addWidget(cancel_btn)
@@ -108,6 +137,15 @@ class SettingsDialog(QDialog):
         deck = self.deck_combo.currentData() or None
         source = self.source_combo.currentData() or DEFAULT_CONFIG["source"]
         dialect_priority = ["uk", "us"] if self.uk_first.isChecked() else ["us", "uk"]
+        # collect mapping
+        fmap = {}
+        for key, edit in self.map_edits.items():
+            vals = [v.strip() for v in edit.text().split(",") if v.strip()]
+            if vals:
+                fmap[key] = vals
+        # fill missing keys from defaults
+        for k, v in DEFAULT_CONFIG["field_map"].items():
+            fmap.setdefault(k, v)
         save_config(
             {
                 "note_type": note_type,
@@ -115,6 +153,7 @@ class SettingsDialog(QDialog):
                 "remember_last": self.remember_chk.isChecked(),
                 "dialect_priority": dialect_priority,
                 "source": source,
+                "field_map": fmap,
             }
         )
         tooltip("Настройки сохранены.", parent=self)

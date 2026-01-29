@@ -13,12 +13,12 @@ DEFAULT_CONFIG: Dict = {
     "deck": None,
     "remember_last": True,
     "field_map": {
-        "word": "Word",
-        "definition": "Definition",
-        "examples": "Examples",
-        "synonyms": "Synonyms",
-        "audio": "Audio",
-        "picture": "Picture",
+        "word": ["Word", "Front"],
+        "definition": ["Definition"],
+        "examples": ["Examples", "Example"],
+        "synonyms": ["Synonyms"],
+        "audio": ["Audio"],
+        "picture": ["Picture"],
     },
     "dialect_priority": ["us", "uk"],
     "max_examples": 2,
@@ -77,20 +77,18 @@ def get_config() -> Dict:
     for k, v in stored.items():
         merged[k] = v
     # ensure nested dict keeps defaults too
-    merged["field_map"] = {
-        **DEFAULT_CONFIG.get("field_map", {}),
-        **(stored.get("field_map") or {}),
-    }
+    merged["field_map"] = normalize_field_map(
+        {**DEFAULT_CONFIG.get("field_map", {}), **(stored.get("field_map") or {})}
+    )
     return merged
 
 
 def save_config(updates: Dict):
     cfg = get_config()
     cfg.update(updates)
-    cfg["field_map"] = {
-        **DEFAULT_CONFIG.get("field_map", {}),
-        **(cfg.get("field_map") or {}),
-    }
+    cfg["field_map"] = normalize_field_map(
+        {**DEFAULT_CONFIG.get("field_map", {}), **(cfg.get("field_map") or {})}
+    )
     try:
         mw.addonManager.writeConfig(ADDON_NAME, cfg)
     except Exception:
@@ -114,3 +112,20 @@ def save_config(updates: Dict):
             json.dump(cfg, f, ensure_ascii=False, indent=2)
     except Exception:
         traceback.print_exc()
+
+
+def normalize_field_map(fmap: Dict) -> Dict[str, list]:
+    """Ensure every mapping value is a list of field names (trimmed, non-empty)."""
+    normalized: Dict[str, list] = {}
+    for key, val in fmap.items():
+        names: list[str] = []
+        if isinstance(val, str):
+            parts = val.split(",")
+            names = [p.strip() for p in parts if p and p.strip()]
+        elif isinstance(val, (list, tuple)):
+            for p in val:
+                if isinstance(p, str) and p.strip():
+                    names.append(p.strip())
+        if names:
+            normalized[key] = names
+    return normalized

@@ -210,24 +210,19 @@ class FetchDialog(QDialog):
         col.models.setCurrent(model)
 
         note = col.newNote(model)
-        fmap: Dict[str, str] = self.cfg["field_map"]
+        fmap: Dict[str, List[str]] = self.cfg["field_map"]
 
-        def set_field(key: str, value: str, alt_names: Optional[list[str]] = None):
-            alt_names = alt_names or []
-            candidates = []
-            # primary from config
-            if fmap.get(key):
-                candidates.append(fmap[key])
-            # provided fallbacks
-            candidates.extend([n for n in alt_names if n])
-            # apply to first existing field name(s)
-            for name in candidates:
+        def set_field(key: str, value: str):
+            names = fmap.get(key) or []
+            if isinstance(names, str):
+                names = [n.strip() for n in names.split(",") if n.strip()]
+            for name in names:
                 if name in note:
                     note[name] = value
-                    # continue to next candidate to allow multiple targets (Word + Front)
-        set_field("word", self.word_edit.text().strip(), alt_names=["Front", "Ans"])
+
+        set_field("word", self.word_edit.text().strip())
         set_field("definition", sense.definition)
-        set_field("examples", "<br>".join(sense.examples[: self.cfg["max_examples"]]), alt_names=["Example"])
+        set_field("examples", "<br>".join(sense.examples[: self.cfg["max_examples"]]))
         set_field("synonyms", ", ".join(sense.synonyms[: self.cfg["max_synonyms"]]))
 
         # audio

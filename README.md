@@ -17,6 +17,7 @@ Open **Tools → Dictionary Fetch — Settings**. Configure:
 - Remember last selections.
 - Default source.
 - Audio dialect priority for Cambridge (UK>US or US>UK).
+- Field mapping: for each logical field (word, definition, examples, synonyms, audio, picture) list one or more Anki fields, comma-separated (e.g., `Word, Front` or `Examples, Example`).
 
 ## Implementation Notes
 - Uses `requests` + `BeautifulSoup`. Cambridge parser gathers audio from multiple attributes/buttons (including AMP) and images from `/media/` links. Wiktionary parser reads the “Значение”/“Синонимы” sections inside the Russian language block.

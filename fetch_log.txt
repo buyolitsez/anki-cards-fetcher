@@ -39,3 +39,8 @@
 [wiktionary] lang_section nodes: 5
 [wiktionary] senses parsed: 1, synonyms: 9
 [wiktionary] senses found: 1
+[wiktionary] fetch 'бобыль' -> https://ru.wiktionary.org/wiki/%D0%B1%D0%BE%D0%B1%D1%8B%D0%BB%D1%8C
+[wiktionary] status 200, len=106849
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 2, synonyms: 0
+[wiktionary] senses found: 2

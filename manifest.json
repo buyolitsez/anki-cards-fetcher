@@ -1,7 +1,7 @@
 {
-  "name": "Cambridge Fetcher",
-  "package": "cambridge_fetch",
+  "name": "Cambridge/Wiktionary Fetcher",
+  "package": "anki_card_fetcher",
   "author": "buyolitsez1951@gmail.com",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "min_point_version": 45
 }
