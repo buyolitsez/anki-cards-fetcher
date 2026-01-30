@@ -80,15 +80,11 @@ class CambridgeFetcher(BaseFetcher):
             picture = self._parse_picture(entry)
             pos = self._text(entry.select_one("span.pos.dpos"))
 
-            for block in entry.select("div.def-block.ddef_block"):
-                definition = self._text(block.select_one("div.def.ddef_d.db"))
+            for block in entry.select("div.def-block"):
+                definition = self._text(block.select_one("div.def.ddef_d.db, div.def.ddef_d, div.def"))
                 if not definition:
                     continue
-                examples: List[str] = []
-                for ex in block.select(".examp, .dexamp, span.eg, span.deg, span.xref span.eg"):
-                    text = self._text(ex)
-                    if text and text not in examples:
-                        examples.append(text)
+                examples: List[str] = self._parse_examples(block)
                 synonyms: List[str] = []
                 for a in block.select(
                     "div.thesref a, div.daccord a, div.daccordLink a, .synonyms a, .daccord-h a"
@@ -107,6 +103,35 @@ class CambridgeFetcher(BaseFetcher):
                     )
                 )
         return senses
+
+    def _parse_examples(self, block) -> List[str]:
+        examples: List[str] = []
+        selectors = [
+            ".eg",
+            ".deg",
+            ".examp",
+            ".dexamp",
+            "span.eg",
+            "span.deg",
+            "span.xref span.eg",
+            ".example",
+            ".dexample",
+            "li.example",
+        ]
+        for sel in selectors:
+            for ex in block.select(sel):
+                text = self._text(ex)
+                if text and text not in examples:
+                    examples.append(text)
+        # broader fallback: any element whose class contains eg/example/examp
+        if not examples:
+            for ex in block.select("[class]"):
+                classes = " ".join(ex.get("class", []))
+                if re.search(r"(?:^|\b)(eg|deg|example|examp|dexamp)(?:\b|$)", classes, re.IGNORECASE):
+                    text = self._text(ex)
+                    if text and text not in examples:
+                        examples.append(text)
+        return examples
 
     def _text(self, node) -> str:
         if not node:

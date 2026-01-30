@@ -126,3 +126,13 @@
 [wiktionary] fetch 'шенапан' -> https://ru.wiktionary.org/wiki/%D1%88%D0%B5%D0%BD%D0%B0%D0%BF%D0%B0%D0%BD
 [wiktionary] status 404, len=42541
 [wiktionary] 404 for 'шенапан'
+[wiktionary] fetch 'фатум' -> https://ru.wiktionary.org/wiki/%D1%84%D0%B0%D1%82%D1%83%D0%BC
+[wiktionary] status 200, len=91692
+[wiktionary] lang_section nodes: 5
+[wiktionary] senses parsed: 1, synonyms: 2
+[wiktionary] senses found: 1, picture: False
+[wiktionary] fetch 'дом' -> https://ru.wiktionary.org/wiki/%D0%B4%D0%BE%D0%BC
+[wiktionary] status 200, len=350776
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 7, synonyms: 11
+[wiktionary] senses found: 7, picture: True

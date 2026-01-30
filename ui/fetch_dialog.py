@@ -209,7 +209,7 @@ class FetchDialog(QDialog):
         col.decks.select(deck_id)
         col.models.setCurrent(model)
 
-        note = col.newNote(model)
+        note = col.new_note(model)
         fmap: Dict[str, List[str]] = self.cfg["field_map"]
 
         def set_field(key: str, value: str):

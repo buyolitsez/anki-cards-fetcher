@@ -1,6 +1,6 @@
 {
-  "note_type": "мои слова",
-  "deck": "русский",
+  "note_type": "English new words-163e4",
+  "deck": "english",
   "remember_last": true,
   "field_map": {
     "word": [
@@ -32,5 +32,5 @@
   ],
   "max_examples": 2,
   "max_synonyms": 4,
-  "source": "wiktionary"
+  "source": "cambridge"
 }
