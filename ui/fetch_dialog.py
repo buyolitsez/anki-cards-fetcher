@@ -218,7 +218,12 @@ class FetchDialog(QDialog):
                 names = [n.strip() for n in names.split(",") if n.strip()]
             for name in names:
                 if name in note:
-                    note[name] = value
+                    if not value:
+                        continue
+                    if note[name]:
+                        note[name] = f"{note[name]}<br>{value}"
+                    else:
+                        note[name] = value
 
         set_field("word", self.word_edit.text().strip())
         set_field("definition", sense.definition)

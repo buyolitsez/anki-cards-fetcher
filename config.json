@@ -23,7 +23,8 @@
     ],
     "picture": [
       "Picture",
-      "Image"
+      "Image",
+      "Definition"
     ]
   },
   "dialect_priority": [
