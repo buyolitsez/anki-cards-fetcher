@@ -78,30 +78,36 @@ class CambridgeFetcher(BaseFetcher):
         for entry in entries:
             audio_map = self._parse_audio(entry)
             picture = self._parse_picture(entry)
-            pos = self._text(entry.select_one("span.pos.dpos"))
+            entry_pos = self._text(entry.select_one("span.pos.dpos, span.pos, span.dpos"))
 
-            for block in entry.select("div.def-block"):
-                definition = self._text(block.select_one("div.def.ddef_d.db, div.def.ddef_d, div.def"))
-                if not definition:
-                    continue
-                examples: List[str] = self._parse_examples(block)
-                synonyms: List[str] = []
-                for a in block.select(
-                    "div.thesref a, div.daccord a, div.daccordLink a, .synonyms a, .daccord-h a"
-                ):
-                    text = self._text(a)
-                    if text and text not in synonyms:
-                        synonyms.append(text)
-                senses.append(
-                    Sense(
-                        definition=definition,
-                        examples=examples,
-                        synonyms=synonyms,
-                        pos=pos,
-                        audio_urls=audio_map.copy(),
-                        picture_url=picture,
+            sections = entry.select("div.entry-body__el")
+            if not sections:
+                sections = [entry]
+
+            for section in sections:
+                pos = self._text(section.select_one("span.pos.dpos, span.pos, span.dpos")) or entry_pos
+                for block in section.select("div.def-block"):
+                    definition = self._text(block.select_one("div.def.ddef_d.db, div.def.ddef_d, div.def"))
+                    if not definition:
+                        continue
+                    examples: List[str] = self._parse_examples(block)
+                    synonyms: List[str] = []
+                    for a in block.select(
+                        "div.thesref a, div.daccord a, div.daccordLink a, .synonyms a, .daccord-h a"
+                    ):
+                        text = self._text(a)
+                        if text and text not in synonyms:
+                            synonyms.append(text)
+                    senses.append(
+                        Sense(
+                            definition=definition,
+                            examples=examples,
+                            synonyms=synonyms,
+                            pos=pos,
+                            audio_urls=audio_map.copy(),
+                            picture_url=picture,
+                        )
                     )
-                )
         return senses
 
     def _parse_examples(self, block) -> List[str]:
