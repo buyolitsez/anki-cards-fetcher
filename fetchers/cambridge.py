@@ -79,6 +79,7 @@ class CambridgeFetcher(BaseFetcher):
             audio_map = self._parse_audio(entry)
             picture = self._parse_picture(entry)
             entry_pos = self._text(entry.select_one("span.pos.dpos, span.pos, span.dpos"))
+            entry_examples = self._parse_entry_examples(entry)
 
             sections = entry.select("div.entry-body__el")
             if not sections:
@@ -91,6 +92,8 @@ class CambridgeFetcher(BaseFetcher):
                     if not definition:
                         continue
                     examples: List[str] = self._parse_examples(block)
+                    if not examples and entry_examples:
+                        examples = entry_examples.copy()
                     synonyms: List[str] = []
                     for a in block.select(
                         "div.thesref a, div.daccord a, div.daccordLink a, .synonyms a, .daccord-h a"
@@ -109,6 +112,22 @@ class CambridgeFetcher(BaseFetcher):
                         )
                     )
         return senses
+
+    def _parse_entry_examples(self, entry) -> List[str]:
+        """Fallback: examples listed in accordion 'Examples' section for the entry."""
+        examples: List[str] = []
+        for section in entry.select(".daccord section"):
+            header = section.select_one(".daccord_h, header")
+            if not header:
+                continue
+            header_text = self._text(header).lower()
+            if "example" not in header_text:
+                continue
+            for ex in section.select(".eg, .dexamp, .examp, li.eg, li.dexamp"):
+                text = self._text(ex)
+                if text and text not in examples:
+                    examples.append(text)
+        return examples
 
     def _parse_examples(self, block) -> List[str]:
         examples: List[str] = []
