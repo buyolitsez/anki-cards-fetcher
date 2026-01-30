@@ -69,3 +69,60 @@
 [wiktionary] lang_section nodes: 3
 [wiktionary] senses parsed: 1, synonyms: 0
 [wiktionary] senses found: 1, picture: True
+[wiktionary] fetch 'резонёрствовать' -> https://ru.wiktionary.org/wiki/%D1%80%D0%B5%D0%B7%D0%BE%D0%BD%D1%91%D1%80%D1%81%D1%82%D0%B2%D0%BE%D0%B2%D0%B0%D1%82%D1%8C
+[wiktionary] status 200, len=95221
+[wiktionary] lang_section nodes: 10
+[wiktionary] senses parsed: 1, synonyms: 0
+[wiktionary] senses found: 1, picture: False
+[wiktionary] fetch 'вакса' -> https://ru.wiktionary.org/wiki/%D0%B2%D0%B0%D0%BA%D1%81%D0%B0
+[wiktionary] status 200, len=156470
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 2, synonyms: 4
+[wiktionary] senses found: 2, picture: False
+[wiktionary] fetch 'анафема' -> https://ru.wiktionary.org/wiki/%D0%B0%D0%BD%D0%B0%D1%84%D0%B5%D0%BC%D0%B0
+[wiktionary] status 200, len=110628
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 2, synonyms: 3
+[wiktionary] senses found: 2, picture: False
+[wiktionary] fetch 'жеманство' -> https://ru.wiktionary.org/wiki/%D0%B6%D0%B5%D0%BC%D0%B0%D0%BD%D1%81%D1%82%D0%B2%D0%BE
+[wiktionary] status 200, len=114029
+[wiktionary] lang_section nodes: 5
+[wiktionary] senses parsed: 1, synonyms: 13
+[wiktionary] senses found: 1, picture: True
+[wiktionary] fetch 'рулада' -> https://ru.wiktionary.org/wiki/%D1%80%D1%83%D0%BB%D0%B0%D0%B4%D0%B0
+[wiktionary] status 200, len=91123
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 1, synonyms: 1
+[wiktionary] senses found: 1, picture: False
+[wiktionary] fetch 'истый' -> https://ru.wiktionary.org/wiki/%D0%B8%D1%81%D1%82%D1%8B%D0%B9
+[wiktionary] status 200, len=122457
+[wiktionary] lang_section nodes: 9
+[wiktionary] senses parsed: 2, synonyms: 5
+[wiktionary] senses found: 2, picture: False
+[wiktionary] fetch 'дож' -> https://ru.wiktionary.org/wiki/%D0%B4%D0%BE%D0%B6
+[wiktionary] status 200, len=274646
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 1, synonyms: 0
+[wiktionary] senses found: 1, picture: False
+[wiktionary] fetch 'испарина' -> https://ru.wiktionary.org/wiki/%D0%B8%D1%81%D0%BF%D0%B0%D1%80%D0%B8%D0%BD%D0%B0
+[wiktionary] status 200, len=95112
+[wiktionary] lang_section nodes: 5
+[wiktionary] senses parsed: 1, synonyms: 1
+[wiktionary] senses found: 1, picture: False
+[wiktionary] fetch 'спинет' -> https://ru.wiktionary.org/wiki/%D1%81%D0%BF%D0%B8%D0%BD%D0%B5%D1%82
+[wiktionary] status 200, len=92237
+[wiktionary] lang_section nodes: 11
+[wiktionary] senses parsed: 1, synonyms: 0
+[wiktionary] senses found: 1, picture: True
+[wiktionary] fetch 'шенапан' -> https://ru.wiktionary.org/wiki/%D1%88%D0%B5%D0%BD%D0%B0%D0%BF%D0%B0%D0%BD
+[wiktionary] status 404, len=42541
+[wiktionary] fetch 'фывфыв' -> https://ru.wiktionary.org/wiki/%D1%84%D1%8B%D0%B2%D1%84%D1%8B%D0%B2
+[wiktionary] status 404, len=42413
+[wiktionary] fetch 'рулада' -> https://ru.wiktionary.org/wiki/%D1%80%D1%83%D0%BB%D0%B0%D0%B4%D0%B0
+[wiktionary] status 200, len=91123
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 1, synonyms: 1
+[wiktionary] senses found: 1, picture: False
+[wiktionary] fetch 'шенапан' -> https://ru.wiktionary.org/wiki/%D1%88%D0%B5%D0%BD%D0%B0%D0%BF%D0%B0%D0%BD
+[wiktionary] status 404, len=42541
+[wiktionary] 404 for 'шенапан'

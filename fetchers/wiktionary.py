@@ -48,7 +48,10 @@ class WiktionaryFetcher(BaseFetcher):
             log(f"[wiktionary] status {resp.status_code}, len={len(resp.text)}")
         except Exception as e:
             log(f"[wiktionary] request failed: {e}")
-            raise
+            raise RuntimeError(f"Wiktionary request failed: {e}")
+        if resp.status_code == 404:
+            log(f"[wiktionary] 404 for '{word}'")
+            return []
         if resp.status_code >= 400:
             raise RuntimeError(f"Wiktionary returned {resp.status_code} for '{word}'.")
 
