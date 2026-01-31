@@ -1,5 +1,5 @@
 {
-  "note_type": "Basic",
+  "note_type": "english ivantea kolya",
   "deck": "english",
   "remember_last": true,
   "field_map": {
@@ -18,10 +18,12 @@
       "Synonyms"
     ],
     "pos": [
-      "POS"
+      "POS",
+      "Front"
     ],
     "ipa": [
-      "IPA"
+      "IPA",
+      "Front"
     ],
     "audio": [
       "Audio"
@@ -44,5 +46,5 @@
   ],
   "max_examples": 3,
   "max_synonyms": 4,
-  "source": "cambridge"
+  "source": "wiktionary_en"
 }

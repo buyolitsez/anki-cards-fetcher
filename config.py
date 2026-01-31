@@ -30,7 +30,7 @@ DEFAULT_CONFIG: Dict = {
     "dialect_priority": ["us", "uk"],
     "max_examples": 2,
     "max_synonyms": 4,
-    # источник словаря: cambridge | wiktionary
+    # источник словаря: cambridge | wiktionary | wiktionary_en
     "source": "cambridge",
 }
 

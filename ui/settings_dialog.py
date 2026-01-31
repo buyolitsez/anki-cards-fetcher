@@ -114,7 +114,7 @@ class SettingsDialog(QDialog):
             self.map_edits[key] = edit
             form.addWidget(edit)
 
-        form.addWidget(QLabel("Wiktionary only:"))
+        form.addWidget(QLabel("Wiktionary (ru) only:"))
         self.wiki_map_edits = {}
         for key, label in [
             ("syllables", "Syllables/stress fields"),
