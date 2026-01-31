@@ -72,6 +72,30 @@ class SettingsDialog(QDialog):
         else:
             self.us_first.setChecked(True)
 
+        # image search settings
+        self.image_provider = QComboBox()
+        self.image_provider.addItem("DuckDuckGo (no key)", "duckduckgo")
+        self.image_provider.addItem("Wikimedia Commons", "wikimedia")
+        image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
+        img_provider = image_cfg.get("provider", "duckduckgo")
+        idx = self.image_provider.findData(img_provider)
+        if idx == -1:
+            idx = 0
+        self.image_provider.setCurrentIndex(idx)
+
+        self.image_max = QComboBox()
+        for n in (8, 12, 16, 20, 24, 30):
+            self.image_max.addItem(str(n), n)
+        img_max = int(image_cfg.get("max_results") or 12)
+        idx = self.image_max.findData(img_max)
+        if idx == -1:
+            self.image_max.addItem(str(img_max), img_max)
+            idx = self.image_max.findData(img_max)
+        self.image_max.setCurrentIndex(idx)
+
+        self.image_safe = QCheckBox("Safe search (adult filter)")
+        self.image_safe.setChecked(bool(image_cfg.get("safe_search", True)))
+
         # buttons
         save_btn = QPushButton("Save")
         cancel_btn = QPushButton("Close")
@@ -91,6 +115,13 @@ class SettingsDialog(QDialog):
         dialect_row.addWidget(self.uk_first)
         dialect_row.addWidget(self.us_first)
         form.addLayout(dialect_row)
+
+        form.addWidget(QLabel("Image search:"))
+        form.addWidget(QLabel("Provider:"))
+        form.addWidget(self.image_provider)
+        form.addWidget(QLabel("Max results:"))
+        form.addWidget(self.image_max)
+        form.addWidget(self.image_safe)
 
         # field mappings
         form.addWidget(QLabel("Field mapping (comma-separated per logical key):"))
@@ -153,6 +184,11 @@ class SettingsDialog(QDialog):
         deck = self.deck_combo.currentData() or None
         source = self.source_combo.currentData() or DEFAULT_CONFIG["source"]
         dialect_priority = ["uk", "us"] if self.uk_first.isChecked() else ["us", "uk"]
+        image_search = {
+            "provider": self.image_provider.currentData() or "duckduckgo",
+            "max_results": int(self.image_max.currentData() or 12),
+            "safe_search": self.image_safe.isChecked(),
+        }
         # collect mapping
         fmap = {}
         for key, edit in self.map_edits.items():
@@ -178,6 +214,7 @@ class SettingsDialog(QDialog):
                 "source": source,
                 "field_map": fmap,
                 "wiktionary": {"field_map": wiki_fmap},
+                "image_search": image_search,
             }
         )
         tooltip("Настройки сохранены.", parent=self)

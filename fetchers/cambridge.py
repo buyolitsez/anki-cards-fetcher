@@ -48,6 +48,7 @@ class CambridgeFetcher(BaseFetcher):
                             s.audio_urls = amp_senses[i].audio_urls
                         if amp_senses[i].picture_url:
                             s.picture_url = amp_senses[i].picture_url
+                            s.picture_referer = amp_senses[i].picture_referer or "https://dictionary.cambridge.org/"
         # если аудио нигде не нашли — глобальный поиск по странице (кнопки произношения)
         if senses and all(not s.audio_urls for s in senses):
             soup = self._last_soup  # заполнен в _parse_page
@@ -78,6 +79,7 @@ class CambridgeFetcher(BaseFetcher):
         for entry in entries:
             audio_map = self._parse_audio(entry)
             picture = self._parse_picture(entry)
+            picture_referer = "https://dictionary.cambridge.org/" if picture else None
             ipa_map = self._parse_ipa(entry)
             entry_pos = self._text(entry.select_one("span.pos.dpos, span.pos, span.dpos"))
             entry_examples = self._parse_entry_examples(entry)
@@ -111,6 +113,7 @@ class CambridgeFetcher(BaseFetcher):
                             ipa=ipa_map.copy(),
                             audio_urls=audio_map.copy(),
                             picture_url=picture,
+                            picture_referer=picture_referer,
                         )
                     )
         return senses

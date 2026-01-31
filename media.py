@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Tuple
+from typing import Optional, Tuple
 
 from aqt import mw
 
@@ -19,7 +19,7 @@ def _requests():
         return None
 
 
-def download_to_media(url: str) -> Tuple[str, str]:
+def download_to_media(url: str, referer: Optional[str] = "https://dictionary.cambridge.org/") -> Tuple[str, str]:
     """Скачивает файл и кладёт в медиатеку. Возвращает (filename, local_path).
 
     Дополнительно проверяем content-type, чтобы не сохранить HTML-капчу вместо аудио/картинки.
@@ -31,15 +31,13 @@ def download_to_media(url: str) -> Tuple[str, str]:
         url = "https:" + url
     if url.startswith("/"):
         url = "https://dictionary.cambridge.org" + url
-    resp = requests.get(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "*/*",
-            "Referer": "https://dictionary.cambridge.org/",
-        },
-        timeout=20,
-    )
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "*/*",
+    }
+    if referer:
+        headers["Referer"] = referer
+    resp = requests.get(url, headers=headers, timeout=20)
     resp.raise_for_status()
     ctype = (resp.headers.get("Content-Type") or "").lower()
     is_audio = ctype.startswith("audio/") or url.lower().endswith((".mp3", ".wav", ".ogg"))

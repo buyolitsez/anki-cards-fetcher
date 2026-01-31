@@ -23,6 +23,7 @@ from ..config import get_config, save_config
 from ..fetchers import get_fetcher_by_id, get_fetchers
 from ..media import download_to_media
 from ..models import Sense
+from .image_search_dialog import ImageSearchDialog
 
 
 class FetchDialog(QDialog):
@@ -41,6 +42,8 @@ class FetchDialog(QDialog):
         self.preview.setReadOnly(True)
         self.edit_btn = QPushButton("Insert & Edit")
         self.insert_btn = QPushButton("Insert")
+        self.image_btn = QPushButton("Find Image")
+        self.clear_image_btn = QPushButton("Clear Image")
 
         self.source_combo = QComboBox()
         self.ntype_combo = QComboBox()
@@ -66,6 +69,8 @@ class FetchDialog(QDialog):
         body.addWidget(self.preview, 3)
 
         buttons = QHBoxLayout()
+        buttons.addWidget(self.image_btn)
+        buttons.addWidget(self.clear_image_btn)
         buttons.addWidget(self.edit_btn)
         buttons.addWidget(self.insert_btn)
 
@@ -82,6 +87,8 @@ class FetchDialog(QDialog):
         self.insert_btn.clicked.connect(lambda: self.on_insert(open_editor=False))
         self.edit_btn.clicked.connect(lambda: self.on_insert(open_editor=True))
         self.sense_list.itemDoubleClicked.connect(lambda _: self.on_insert(open_editor=True))
+        self.image_btn.clicked.connect(self.on_find_image)
+        self.clear_image_btn.clicked.connect(self.on_clear_image)
         self.ntype_combo.currentTextChanged.connect(self._remember_selection)
         self.deck_combo.currentTextChanged.connect(self._remember_selection)
         self.source_combo.currentIndexChanged.connect(self._remember_selection)
@@ -206,6 +213,40 @@ class FetchDialog(QDialog):
         ]
         self.preview.setPlainText("\n".join(text))
 
+    def on_find_image(self):
+        row = self.sense_list.currentRow()
+        if row < 0 or row >= len(self.senses):
+            showWarning("Select a sense first.")
+            return
+        query = self.word_edit.text().strip()
+        if not query:
+            showWarning("Enter a word first.")
+            return
+        dlg = ImageSearchDialog(self, query=query)
+        if dlg.exec():
+            if not dlg.selected:
+                return
+            sense = self.senses[row]
+            sense.picture_url = dlg.selected.image_url
+            sense.picture_referer = dlg.selected.source_url
+            item = self.sense_list.item(row)
+            if item:
+                item.setText(sense.preview_text(self.cfg["max_examples"], self.cfg["max_synonyms"]))
+            self.on_select(row)
+
+    def on_clear_image(self):
+        row = self.sense_list.currentRow()
+        if row < 0 or row >= len(self.senses):
+            showWarning("Select a sense first.")
+            return
+        sense = self.senses[row]
+        sense.picture_url = None
+        sense.picture_referer = None
+        item = self.sense_list.item(row)
+        if item:
+            item.setText(sense.preview_text(self.cfg["max_examples"], self.cfg["max_synonyms"]))
+        self.on_select(row)
+
     def on_insert(self, open_editor: bool = False):
         row = self.sense_list.currentRow()
         if row < 0 or row >= len(self.senses):
@@ -271,7 +312,7 @@ class FetchDialog(QDialog):
         pic_tag = ""
         if sense.picture_url:
             try:
-                fname, _ = download_to_media(sense.picture_url)
+                fname, _ = download_to_media(sense.picture_url, referer=sense.picture_referer)
                 pic_tag = f'<img src=\"{fname}\">'
             except Exception as e:
                 showWarning(f"Image download failed: {e}")

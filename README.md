@@ -9,7 +9,8 @@ Fetch definitions into Anki from Cambridge Dictionary (English), ru.wiktionary.o
 1) Open **Tools → Dictionary Fetch (Cambridge/Wiktionary)** (hotkey `Ctrl+Shift+C`).  
 2) Enter a word, choose **Source** (Cambridge / Wiktionary), press **Fetch**.  
 3) Pick a sense from the list; preview shows what will be inserted.  
-4) Click **Insert** (or double-click a sense) to add the note; **Insert & Edit** opens it in the Browser.
+4) Optional: click **Find Image** to search images for the current word and pick one.
+5) Click **Insert** (or double-click a sense) to add the note; **Insert & Edit** opens it in the Browser.
 
 ## Settings
 Open **Tools → Dictionary Fetch — Settings**. Configure:
@@ -17,6 +18,7 @@ Open **Tools → Dictionary Fetch — Settings**. Configure:
 - Remember last selections.
 - Default source.
 - Audio/IPA dialect priority for Cambridge (UK>US or US>UK).
+- Image search provider and result count (used by **Find Image**).
 - Field mapping: for each logical field (word, definition, examples, synonyms, POS, IPA, audio, picture) list one or more Anki fields, comma-separated (e.g., `Word, Front` or `Examples, Example`).
 
 ## Implementation Notes

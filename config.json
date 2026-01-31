@@ -1,6 +1,6 @@
 {
   "note_type": "english ivantea kolya",
-  "deck": "english",
+  "deck": "english (Ivantea, Kolya)",
   "remember_last": true,
   "field_map": {
     "word": [
@@ -46,5 +46,5 @@
   ],
   "max_examples": 3,
   "max_synonyms": 4,
-  "source": "wiktionary_en"
+  "source": "cambridge"
 }

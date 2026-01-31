@@ -99,6 +99,8 @@ class EnglishWiktionaryFetcher(BaseFetcher):
             for s in senses:
                 if not s.picture_url:
                     s.picture_url = picture
+                if not s.picture_referer:
+                    s.picture_referer = "https://en.wiktionary.org/"
         log(f"[wiktionary-en] senses found: {len(senses)}, picture: {bool(picture)}")
         return senses
 

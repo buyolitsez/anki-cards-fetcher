@@ -68,6 +68,8 @@ class WiktionaryFetcher(BaseFetcher):
             for s in senses:
                 if not s.picture_url:
                     s.picture_url = picture
+                if not s.picture_referer:
+                    s.picture_referer = "https://ru.wiktionary.org/"
         if syllables:
             for s in senses:
                 if not s.syllables:

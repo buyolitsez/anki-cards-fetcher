@@ -16,6 +16,7 @@ class Sense:
     ipa: Dict[str, str] = field(default_factory=dict)  # region -> ipa
     audio_urls: Dict[str, str] = field(default_factory=dict)  # region -> url
     picture_url: Optional[str] = None
+    picture_referer: Optional[str] = None
 
     def preview_text(self, max_examples: int, max_synonyms: int) -> str:
         lines: List[str] = []

@@ -32,6 +32,11 @@ DEFAULT_CONFIG: Dict = {
     "max_synonyms": 4,
     # источник словаря: cambridge | wiktionary | wiktionary_en
     "source": "cambridge",
+    "image_search": {
+        "provider": "duckduckgo",
+        "max_results": 12,
+        "safe_search": True,
+    },
 }
 
 # add-on id helper (Anki иногда требует имя папки)
@@ -97,6 +102,9 @@ def get_config() -> Dict:
             **(stored_wiki.get("field_map") or {}),
         }
     )
+    image_default = DEFAULT_CONFIG.get("image_search", {})
+    stored_image = stored.get("image_search") if isinstance(stored.get("image_search"), dict) else {}
+    merged["image_search"] = {**image_default, **(stored_image or {})}
     return merged
 
 
@@ -115,6 +123,9 @@ def save_config(updates: Dict):
             **(stored_wiki.get("field_map") or {}),
         }
     )
+    image_default = DEFAULT_CONFIG.get("image_search", {})
+    stored_image = cfg.get("image_search") if isinstance(cfg.get("image_search"), dict) else {}
+    cfg["image_search"] = {**image_default, **(stored_image or {})}
     try:
         mw.addonManager.writeConfig(ADDON_NAME, cfg)
     except Exception:
