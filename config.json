@@ -1,5 +1,5 @@
 {
-  "note_type": "english ivantea kolya",
+  "note_type": "Basic",
   "deck": "english",
   "remember_last": true,
   "field_map": {
@@ -44,5 +44,5 @@
   ],
   "max_examples": 3,
   "max_synonyms": 4,
-  "source": "wiktionary"
+  "source": "cambridge"
 }
