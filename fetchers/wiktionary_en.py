@@ -270,11 +270,13 @@ class EnglishWiktionaryFetcher(BaseFetcher):
         ]
         for sel in preferred_selectors:
             for node in li.select(sel):
-                text = self._clean_example_text(node.get_text(" ", strip=True))
-                self._add_example(examples, seen, text)
+                html = self._example_html(node)
+                html, text = self._clean_example_html(html)
+                self._add_example(examples, seen, html, text)
         for node in li.select("ul > li, dl > dd"):
-            text = self._clean_example_text(node.get_text(" ", strip=True))
-            self._add_example(examples, seen, text)
+            html = self._example_html(node)
+            html, text = self._clean_example_html(html)
+            self._add_example(examples, seen, html, text)
         return examples
 
     def _extract_picture(self, lang_root) -> Optional[str]:
@@ -321,19 +323,58 @@ class EnglishWiktionaryFetcher(BaseFetcher):
         text = re.sub(r"\[\d+\]", "", text)
         return " ".join(text.split())
 
-    def _clean_example_text(self, text: str) -> str:
-        text = self._clean_text(text)
-        if not text:
+    def _example_html(self, node) -> str:
+        try:
+            soup = BeautifulSoup(str(node), "html.parser")
+            root = soup.find()
+        except Exception:
+            root = None
+        if not root:
             return ""
+        # Strip references/citations; keep bold tags only.
+        for tag in list(root.find_all(True)):
+            if not hasattr(tag, "get"):
+                continue
+            if tag.name in ("b", "strong"):
+                continue
+            if tag.name == "sup":
+                try:
+                    tag.decompose()
+                except Exception:
+                    pass
+                continue
+            attrs = getattr(tag, "attrs", None) or {}
+            classes = " ".join((attrs.get("class") or []))
+            if "reference" in classes or "citation" in classes:
+                try:
+                    tag.decompose()
+                except Exception:
+                    pass
+                continue
+            try:
+                tag.unwrap()
+            except Exception:
+                pass
+        return root.decode_contents()
+
+    def _clean_example_html(self, html: str) -> tuple[str, str]:
+        if not html:
+            return "", ""
+        text = self._clean_text(self._strip_html(html))
+        if not text:
+            return "", ""
         # Strip leading bullets/dashes
+        html = re.sub(r"^[\u2022*\-–—]\s*", "", html)
         text = re.sub(r"^[\u2022*\-–—]\s*", "", text)
         # Remove citation prefix when it looks like a bibliographic entry.
         if ":" in text and self._looks_like_citation_prefix(text):
-            text = text.split(":")[-1].strip()
+            html = html.split(":", 1)[1].strip()
+            text = text.split(":", 1)[1].strip()
         # Drop trailing citation fragments like "->OCLC"
-        text = re.sub(r"\s*->\s*OCLC.*$", "", text)
+        html = re.sub(r"\s*->\s*OCLC.*$", "", html, flags=re.IGNORECASE)
+        text = re.sub(r"\s*->\s*OCLC.*$", "", text, flags=re.IGNORECASE)
         # Trim leftover punctuation
-        return text.strip(" \t-–—:;")
+        return html.strip(" \t-–—:;"), text.strip(" \t-–—:;")
 
     def _looks_like_citation_prefix(self, text: str) -> bool:
         prefix = text.split(":", 1)[0]
@@ -357,14 +398,14 @@ class EnglishWiktionaryFetcher(BaseFetcher):
             return True
         return False
 
-    def _add_example(self, examples: List[str], seen: set[str], text: str):
+    def _add_example(self, examples: List[str], seen: set[str], html: str, text: str):
         if not text:
             return
         norm = self._norm_example(text)
         if not norm or norm in seen:
             return
         seen.add(norm)
-        examples.append(text)
+        examples.append(html)
 
     def _norm_example(self, text: str) -> str:
         text = text.lower()
@@ -372,6 +413,13 @@ class EnglishWiktionaryFetcher(BaseFetcher):
         text = re.sub(r"[\"'“”‘’]", "", text)
         text = re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
         return text
+
+    def _strip_html(self, html: str) -> str:
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            return soup.get_text(" ", strip=True)
+        except Exception:
+            return re.sub(r"<[^>]+>", " ", html)
 
     def _is_audio_url(self, url: str, tag) -> bool:
         if re.search(r"\.(mp3|ogg|wav)\b", url, re.IGNORECASE):
