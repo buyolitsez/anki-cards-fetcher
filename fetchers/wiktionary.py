@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import List
+from typing import List, Optional
 from urllib.parse import quote
 from pathlib import Path
 
@@ -63,10 +63,15 @@ class WiktionaryFetcher(BaseFetcher):
 
         senses = self._parse_senses(lang_section)
         picture = self._extract_picture(lang_section)
+        syllables = self._extract_syllables(lang_section)
         if picture:
             for s in senses:
                 if not s.picture_url:
                     s.picture_url = picture
+        if syllables:
+            for s in senses:
+                if not s.syllables:
+                    s.syllables = syllables
         log(f"[wiktionary] senses found: {len(senses)}, picture: {bool(picture)}")
         return senses
 
@@ -191,6 +196,37 @@ class WiktionaryFetcher(BaseFetcher):
             if width < 80 or height < 80:
                 continue
             return src
+        return None
+
+    def _extract_syllables(self, lang_root) -> Optional[str]:
+        """Extract syllabified/stressed headword like 'о́·мут'."""
+        if not lang_root:
+            return None
+        # Prefer explicit hyphenation marker
+        hyph = lang_root.select_one(".hyph-dot")
+        if hyph:
+            parent = hyph.find_parent(["b", "strong", "span"])
+            if parent:
+                text = parent.get_text("", strip=True)
+                if text:
+                    return text
+        # Fallback: any short Cyrillic text containing a middle dot
+        for text in lang_root.stripped_strings:
+            if "·" in text and re.search(r"[А-Яа-я]", text):
+                # avoid very long strings
+                if len(text) <= 40:
+                    return text
+        # Fallback: parse template data-mw that contains {{по-слогам|...}}
+        for tag in lang_root.find_all(attrs={"data-mw": True}):
+            data = tag.get("data-mw") or ""
+            if "по-слогам" not in data:
+                continue
+            m = re.search(r"по-слогам\\|([^}]+)", data)
+            if not m:
+                continue
+            parts = [p for p in m.group(1).split("|") if p and p != "."]
+            if parts:
+                return "·".join(parts)
         return None
 
     def _split_examples(self, raw: str):

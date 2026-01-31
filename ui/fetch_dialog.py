@@ -156,6 +156,16 @@ class FetchDialog(QDialog):
         cfg = get_config()
         return get_fetcher_by_id(source_id, cfg)
 
+    def _resolve_field_map(self, source_id: str) -> Dict[str, List[str]]:
+        base_map = self.cfg.get("field_map", {})
+        if source_id == "wiktionary":
+            wiki_map = (self.cfg.get("wiktionary") or {}).get("field_map") or {}
+            if wiki_map:
+                merged = dict(base_map)
+                merged.update(wiki_map)
+                return merged
+        return base_map
+
     def on_fetch(self):
         word = self.word_edit.text().strip()
         if not word:
@@ -185,6 +195,7 @@ class FetchDialog(QDialog):
         sense = self.senses[row]
         text = [
             f"Definition: {sense.definition}",
+            f"Syllables: {sense.syllables or '-'}",
             f"Examples: {' | '.join(sense.examples[:self.cfg['max_examples']]) or '-'}",
             f"Synonyms: {', '.join(sense.synonyms[:self.cfg['max_synonyms']]) or '-'}",
             f"POS: {sense.pos or '-'}",
@@ -209,8 +220,16 @@ class FetchDialog(QDialog):
         col.decks.select(deck_id)
         col.models.setCurrent(model)
 
-        note = col.new_note(model)
-        fmap: Dict[str, List[str]] = self.cfg["field_map"]
+        if hasattr(col, "new_note"):
+            note = col.new_note(model)
+        else:
+            # Legacy API: newNote uses current model unless forDeck=True
+            try:
+                note = col.newNote(False)
+            except TypeError:
+                note = col.newNote()
+        source_id = self.source_combo.currentData() or "cambridge"
+        fmap: Dict[str, List[str]] = self._resolve_field_map(source_id)
 
         def set_field(key: str, value: str):
             names = fmap.get(key) or []
@@ -226,6 +245,7 @@ class FetchDialog(QDialog):
                         note[name] = value
 
         set_field("word", self.word_edit.text().strip())
+        set_field("syllables", sense.syllables or "")
         set_field("definition", sense.definition)
         ex = sense.examples[: self.cfg["max_examples"]]
         numbered = [f"{i+1}. {txt}" for i, txt in enumerate(ex)]

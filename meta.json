@@ -1,1 +1,44 @@
-{"config": {"deck": "english", "dialect_priority": ["uk", "us"], "field_map": {"audio": ["Audio"], "definition": ["Definition"], "examples": ["Examples", "Example"], "picture": ["Picture", "Image"], "synonyms": ["Synonyms"], "word": ["Word", "Front", "Ans"]}, "max_examples": 2, "max_synonyms": 4, "note_type": "English new words-163e4", "remember_last": true, "source": "cambridge"}}
+{
+  "config": {
+    "note_type": "мои слова",
+    "deck": "русский",
+    "remember_last": true,
+    "field_map": {
+      "word": [
+        "Word",
+        "Ans"
+      ],
+      "definition": [
+        "Definition"
+      ],
+      "examples": [
+        "Examples",
+        "Example"
+      ],
+      "synonyms": [
+        "Synonyms"
+      ],
+      "audio": [
+        "Audio"
+      ],
+      "picture": [
+        "Picture",
+        "Image"
+      ]
+    },
+    "wiktionary": {
+      "field_map": {
+        "syllables": [
+          "Front"
+        ]
+      }
+    },
+    "dialect_priority": [
+      "uk",
+      "us"
+    ],
+    "max_examples": 2,
+    "max_synonyms": 4,
+    "source": "wiktionary"
+  }
+}

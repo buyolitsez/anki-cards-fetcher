@@ -1,11 +1,10 @@
 {
-  "note_type": "English new words-163e4",
-  "deck": "english",
+  "note_type": "мои слова",
+  "deck": "русский",
   "remember_last": true,
   "field_map": {
     "word": [
       "Word",
-      "Front",
       "Ans"
     ],
     "definition": [
@@ -23,9 +22,15 @@
     ],
     "picture": [
       "Picture",
-      "Image",
-      "Definition"
+      "Image"
     ]
+  },
+  "wiktionary": {
+    "field_map": {
+      "syllables": [
+        "Front"
+      ]
+    }
   },
   "dialect_priority": [
     "uk",
@@ -33,5 +38,5 @@
   ],
   "max_examples": 2,
   "max_synonyms": 4,
-  "source": "cambridge"
+  "source": "wiktionary"
 }

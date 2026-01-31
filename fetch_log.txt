@@ -136,3 +136,8 @@
 [wiktionary] lang_section nodes: 3
 [wiktionary] senses parsed: 7, synonyms: 11
 [wiktionary] senses found: 7, picture: True
+[wiktionary] fetch 'омут' -> https://ru.wiktionary.org/wiki/%D0%BE%D0%BC%D1%83%D1%82
+[wiktionary] status 200, len=105940
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 3, synonyms: 3
+[wiktionary] senses found: 3, picture: False

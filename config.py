@@ -20,6 +20,11 @@ DEFAULT_CONFIG: Dict = {
         "audio": ["Audio"],
         "picture": ["Picture"],
     },
+    "wiktionary": {
+        "field_map": {
+            "syllables": ["Syllables"],
+        }
+    },
     "dialect_priority": ["us", "uk"],
     "max_examples": 2,
     "max_synonyms": 4,
@@ -80,6 +85,16 @@ def get_config() -> Dict:
     merged["field_map"] = normalize_field_map(
         {**DEFAULT_CONFIG.get("field_map", {}), **(stored.get("field_map") or {})}
     )
+    # merge wiktionary subsection
+    wiki_default = DEFAULT_CONFIG.get("wiktionary", {})
+    stored_wiki = stored.get("wiktionary") if isinstance(stored.get("wiktionary"), dict) else {}
+    merged["wiktionary"] = {**wiki_default, **(stored_wiki or {})}
+    merged["wiktionary"]["field_map"] = normalize_field_map(
+        {
+            **(wiki_default.get("field_map", {}) if isinstance(wiki_default, dict) else {}),
+            **(stored_wiki.get("field_map") or {}),
+        }
+    )
     return merged
 
 
@@ -88,6 +103,15 @@ def save_config(updates: Dict):
     cfg.update(updates)
     cfg["field_map"] = normalize_field_map(
         {**DEFAULT_CONFIG.get("field_map", {}), **(cfg.get("field_map") or {})}
+    )
+    wiki_default = DEFAULT_CONFIG.get("wiktionary", {})
+    stored_wiki = cfg.get("wiktionary") if isinstance(cfg.get("wiktionary"), dict) else {}
+    cfg["wiktionary"] = {**wiki_default, **(stored_wiki or {})}
+    cfg["wiktionary"]["field_map"] = normalize_field_map(
+        {
+            **(wiki_default.get("field_map", {}) if isinstance(wiki_default, dict) else {}),
+            **(stored_wiki.get("field_map") or {}),
+        }
     )
     try:
         mw.addonManager.writeConfig(ADDON_NAME, cfg)

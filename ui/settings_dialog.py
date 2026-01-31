@@ -112,6 +112,20 @@ class SettingsDialog(QDialog):
             self.map_edits[key] = edit
             form.addWidget(edit)
 
+        form.addWidget(QLabel("Wiktionary only:"))
+        self.wiki_map_edits = {}
+        for key, label in [
+            ("syllables", "Syllables/stress fields"),
+        ]:
+            form.addWidget(QLabel(label + ":"))
+            edit = QLineEdit()
+            vals = (self.cfg.get("wiktionary", {}).get("field_map", {}).get(key, []) or [])
+            if isinstance(vals, str):
+                vals = [v.strip() for v in vals.split(",") if v.strip()]
+            edit.setText(", ".join(vals))
+            self.wiki_map_edits[key] = edit
+            form.addWidget(edit)
+
         buttons = QHBoxLayout()
         buttons.addWidget(save_btn)
         buttons.addWidget(cancel_btn)
@@ -146,6 +160,13 @@ class SettingsDialog(QDialog):
         # fill missing keys from defaults
         for k, v in DEFAULT_CONFIG["field_map"].items():
             fmap.setdefault(k, v)
+        wiki_fmap = {}
+        for key, edit in self.wiki_map_edits.items():
+            vals = [v.strip() for v in edit.text().split(",") if v.strip()]
+            if vals:
+                wiki_fmap[key] = vals
+        for k, v in DEFAULT_CONFIG.get("wiktionary", {}).get("field_map", {}).items():
+            wiki_fmap.setdefault(k, v)
         save_config(
             {
                 "note_type": note_type,
@@ -154,6 +175,7 @@ class SettingsDialog(QDialog):
                 "dialect_priority": dialect_priority,
                 "source": source,
                 "field_map": fmap,
+                "wiktionary": {"field_map": wiki_fmap},
             }
         )
         tooltip("Настройки сохранены.", parent=self)

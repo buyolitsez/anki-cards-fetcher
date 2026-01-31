@@ -12,6 +12,7 @@ class Sense:
     examples: List[str] = field(default_factory=list)
     synonyms: List[str] = field(default_factory=list)
     pos: Optional[str] = None
+    syllables: Optional[str] = None
     audio_urls: Dict[str, str] = field(default_factory=dict)  # region -> url
     picture_url: Optional[str] = None
 
@@ -30,4 +31,6 @@ class Sense:
             lines.append("Audio: " + ", ".join(self.audio_urls.keys()))
         if self.picture_url:
             lines.append("Picture available")
+        if self.syllables:
+            lines.append("Syllables: " + self.syllables)
         return "\n".join(lines)
