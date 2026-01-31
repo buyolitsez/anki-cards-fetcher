@@ -78,6 +78,7 @@ class CambridgeFetcher(BaseFetcher):
         for entry in entries:
             audio_map = self._parse_audio(entry)
             picture = self._parse_picture(entry)
+            ipa_map = self._parse_ipa(entry)
             entry_pos = self._text(entry.select_one("span.pos.dpos, span.pos, span.dpos"))
             entry_examples = self._parse_entry_examples(entry)
 
@@ -107,6 +108,7 @@ class CambridgeFetcher(BaseFetcher):
                             examples=examples,
                             synonyms=synonyms,
                             pos=pos,
+                            ipa=ipa_map.copy(),
                             audio_urls=audio_map.copy(),
                             picture_url=picture,
                         )
@@ -205,6 +207,43 @@ class CambridgeFetcher(BaseFetcher):
                 if url:
                     audio["default"] = url
         return audio
+
+    def _parse_ipa(self, entry) -> Dict[str, str]:
+        ipa: Dict[str, str] = {}
+        # Primary: pronunciation blocks by region (uk/us)
+        for block in entry.select(".dpron-i"):
+            region_key = self._find_region(block)
+            ipa_node = block.select_one(".ipa, .dipa")
+            if not ipa_node:
+                continue
+            text = self._text(ipa_node)
+            pron_parent = ipa_node.find_parent(class_="pron")
+            if pron_parent:
+                pron_text = self._text(pron_parent)
+                if "/" in pron_text:
+                    pron_text = pron_text.replace("/ ", "/").replace(" /", "/")
+                    text = pron_text
+            if not text:
+                continue
+            key = region_key or "default"
+            if key not in ipa:
+                ipa[key] = text
+        # Fallback: any ipa node in the entry
+        if not ipa:
+            for ipa_node in entry.select(".ipa, .dipa"):
+                text = self._text(ipa_node)
+                pron_parent = ipa_node.find_parent(class_="pron")
+                if pron_parent:
+                    pron_text = self._text(pron_parent)
+                    if "/" in pron_text:
+                        pron_text = pron_text.replace("/ ", "/").replace(" /", "/")
+                        text = pron_text
+                if not text:
+                    continue
+                key = self._find_region(ipa_node) or "default"
+                if key not in ipa:
+                    ipa[key] = text
+        return ipa
 
     def _find_region(self, tag) -> Optional[str]:
         """Пытается вычислить регион (us/uk) исходя из ближайших .region или классов."""

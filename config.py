@@ -17,6 +17,8 @@ DEFAULT_CONFIG: Dict = {
         "definition": ["Definition"],
         "examples": ["Examples", "Example"],
         "synonyms": ["Synonyms"],
+        "pos": ["POS"],
+        "ipa": ["IPA"],
         "audio": ["Audio"],
         "picture": ["Picture"],
     },

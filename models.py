@@ -13,6 +13,7 @@ class Sense:
     synonyms: List[str] = field(default_factory=list)
     pos: Optional[str] = None
     syllables: Optional[str] = None
+    ipa: Dict[str, str] = field(default_factory=dict)  # region -> ipa
     audio_urls: Dict[str, str] = field(default_factory=dict)  # region -> url
     picture_url: Optional[str] = None
 
@@ -33,4 +34,6 @@ class Sense:
             lines.append("Picture available")
         if self.syllables:
             lines.append("Syllables: " + self.syllables)
+        if self.ipa:
+            lines.append("IPA: " + ", ".join(self.ipa.keys()))
         return "\n".join(lines)

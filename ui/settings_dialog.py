@@ -86,7 +86,7 @@ class SettingsDialog(QDialog):
         form.addWidget(QLabel("Default source:"))
         form.addWidget(self.source_combo)
         form.addWidget(self.remember_chk)
-        form.addWidget(QLabel("Audio dialect priority (Cambridge only):"))
+        form.addWidget(QLabel("Audio/IPA dialect priority (Cambridge only):"))
         dialect_row = QHBoxLayout()
         dialect_row.addWidget(self.uk_first)
         dialect_row.addWidget(self.us_first)
@@ -100,6 +100,8 @@ class SettingsDialog(QDialog):
             ("definition", "Definition fields"),
             ("examples", "Examples fields"),
             ("synonyms", "Synonyms fields"),
+            ("pos", "Part of speech fields"),
+            ("ipa", "IPA fields"),
             ("audio", "Audio fields"),
             ("picture", "Picture fields"),
         ]:

@@ -1,11 +1,11 @@
 {
-  "note_type": "мои слова",
-  "deck": "русский",
+  "note_type": "english ivantea kolya",
+  "deck": "english",
   "remember_last": true,
   "field_map": {
     "word": [
       "Word",
-      "Ans"
+      "Front"
     ],
     "definition": [
       "Definition"
@@ -16,6 +16,12 @@
     ],
     "synonyms": [
       "Synonyms"
+    ],
+    "pos": [
+      "POS"
+    ],
+    "ipa": [
+      "IPA"
     ],
     "audio": [
       "Audio"
@@ -28,7 +34,7 @@
   "wiktionary": {
     "field_map": {
       "syllables": [
-        "Front"
+        "Syllables"
       ]
     }
   },
@@ -36,7 +42,7 @@
     "uk",
     "us"
   ],
-  "max_examples": 2,
+  "max_examples": 3,
   "max_synonyms": 4,
-  "source": "wiktionary"
+  "source": "cambridge"
 }

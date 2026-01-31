@@ -193,12 +193,14 @@ class FetchDialog(QDialog):
             self.preview.clear()
             return
         sense = self.senses[row]
+        ipa = self._choose_ipa(sense.ipa)
         text = [
             f"Definition: {sense.definition}",
             f"Syllables: {sense.syllables or '-'}",
             f"Examples: {' | '.join(sense.examples[:self.cfg['max_examples']]) or '-'}",
             f"Synonyms: {', '.join(sense.synonyms[:self.cfg['max_synonyms']]) or '-'}",
             f"POS: {sense.pos or '-'}",
+            f"IPA: {ipa or '-'}",
             f"Audio: {', '.join(sense.audio_urls.keys()) or '-'}",
             f"Picture: {'yes' if sense.picture_url else 'no'}",
         ]
@@ -247,6 +249,8 @@ class FetchDialog(QDialog):
         set_field("word", self.word_edit.text().strip())
         set_field("syllables", sense.syllables or "")
         set_field("definition", sense.definition)
+        set_field("pos", sense.pos or "")
+        set_field("ipa", self._choose_ipa(sense.ipa) or "")
         ex = sense.examples[: self.cfg["max_examples"]]
         numbered = [f"{i+1}. {txt}" for i, txt in enumerate(ex)]
         set_field("examples", "<br>".join(numbered))
@@ -314,6 +318,16 @@ class FetchDialog(QDialog):
             return audio_map["default"]
         if audio_map:
             return next(iter(audio_map.values()))
+        return None
+
+    def _choose_ipa(self, ipa_map: Dict[str, str]) -> Optional[str]:
+        for pref in self.cfg.get("dialect_priority", []):
+            if pref in ipa_map:
+                return ipa_map[pref]
+        if "default" in ipa_map:
+            return ipa_map["default"]
+        if ipa_map:
+            return next(iter(ipa_map.values()))
         return None
 
     def _open_browser(self, nid: int):
