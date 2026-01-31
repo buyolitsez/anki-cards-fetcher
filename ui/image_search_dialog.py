@@ -31,6 +31,13 @@ class ImageSearchDialog(QDialog):
         self.cfg = get_config()
         self.results: List[ImageResult] = []
         self.selected: Optional[ImageResult] = None
+        self.last_query: str = ""
+        self.last_provider: str = ""
+        self.last_safe: bool = True
+        self._thumb_queue: List[ImageResult] = []
+        self._thumb_token: int = 0
+        self._thumb_in_flight: int = 0
+        self._thumb_max_in_flight: int = 4
 
         # widgets
         self.query_edit = QLineEdit()
@@ -64,6 +71,8 @@ class ImageSearchDialog(QDialog):
             self.results_list.setSelectionMode(selection_mode)
 
         self.use_btn = QPushButton("Use selected")
+        self.load_more_btn = QPushButton("Load more")
+        self.reload_thumbs_btn = QPushButton("Reload thumbnails")
         self.cancel_btn = QPushButton("Cancel")
 
         # layout
@@ -73,6 +82,8 @@ class ImageSearchDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.use_btn)
+        buttons.addWidget(self.load_more_btn)
+        buttons.addWidget(self.reload_thumbs_btn)
         buttons.addWidget(self.cancel_btn)
 
         main = QVBoxLayout()
@@ -87,6 +98,8 @@ class ImageSearchDialog(QDialog):
         self.query_edit.returnPressed.connect(self.on_search)
         self.results_list.itemDoubleClicked.connect(lambda _: self.accept_selected())
         self.use_btn.clicked.connect(self.accept_selected)
+        self.load_more_btn.clicked.connect(self.on_load_more)
+        self.reload_thumbs_btn.clicked.connect(self.on_reload_thumbs)
         self.cancel_btn.clicked.connect(self.reject)
 
         if self.query_edit.text().strip():
@@ -97,10 +110,7 @@ class ImageSearchDialog(QDialog):
         if not item:
             showWarning("Select an image first.")
             return
-        user_role = getattr(Qt, "UserRole", None)
-        if user_role is None and hasattr(Qt, "ItemDataRole"):
-            user_role = Qt.ItemDataRole.UserRole
-        res = item.data(user_role)
+        res = item.data(self._user_role())
         if not isinstance(res, ImageResult):
             showWarning("Invalid selection.")
             return
@@ -119,8 +129,54 @@ class ImageSearchDialog(QDialog):
             provider = image_cfg.get("provider", "duckduckgo")
             max_results = int(image_cfg.get("max_results") or 12)
             safe = bool(image_cfg.get("safe_search", True))
-            results = search_images(query, provider=provider, max_results=max_results, safe_search=safe)
-            attach_thumbnails(results)
+            results, used_provider = search_images(
+                query,
+                provider=provider,
+                max_results=max_results,
+                safe_search=safe,
+                offset=0,
+                allow_fallback=True,
+            )
+            return results, used_provider, safe
+
+        def on_done(future):
+            try:
+                results, used_provider, safe = future.result()
+            except Exception as e:
+                self._set_busy(False, "")
+                showWarning(f"Image search failed: {e}")
+                traceback.print_exc()
+                return
+            self.last_query = query
+            self.last_provider = used_provider
+            self.last_safe = safe
+            self._set_busy(False, f"Found {len(results)} images.")
+            self._show_results(results)
+            self._start_thumbnail_jobs(results)
+
+        self._run_in_background(task, on_done)
+
+    def on_load_more(self):
+        if not self.last_query:
+            showWarning("Run a search first.")
+            return
+        offset = len(self.results)
+        if offset <= 0:
+            showWarning("Run a search first.")
+            return
+        self._set_busy(True, "Loading more images...")
+
+        def task():
+            image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
+            max_results = int(image_cfg.get("max_results") or 12)
+            results, _ = search_images(
+                self.last_query,
+                provider=self.last_provider or image_cfg.get("provider", "duckduckgo"),
+                max_results=max_results,
+                safe_search=self.last_safe,
+                offset=offset,
+                allow_fallback=False,
+            )
             return results
 
         def on_done(future):
@@ -128,13 +184,21 @@ class ImageSearchDialog(QDialog):
                 results = future.result()
             except Exception as e:
                 self._set_busy(False, "")
-                showWarning(f"Image search failed: {e}")
+                showWarning(f"Load more failed: {e}")
                 traceback.print_exc()
                 return
-            self._set_busy(False, f"Found {len(results)} images.")
-            self._show_results(results)
+            self._set_busy(False, f"Loaded {len(results)} more.")
+            self._append_results(results)
+            self._enqueue_thumbnails(results)
 
         self._run_in_background(task, on_done)
+
+    def on_reload_thumbs(self):
+        if not self.results:
+            showWarning("Nothing to reload.")
+            return
+        self._set_busy(False, "Thumbnails refresh queued.")
+        self._enqueue_thumbnails(self.results, reset=True)
 
     def _run_in_background(self, task, on_done):
         if hasattr(mw, "taskman"):
@@ -148,36 +212,101 @@ class ImageSearchDialog(QDialog):
             on_done(_DummyFuture(None, e))
 
     def _show_results(self, results: List[ImageResult]):
-        self.results = results
+        self.results = []
         self.results_list.clear()
-        for res in results:
-            item = QListWidgetItem()
-            user_role = getattr(Qt, "UserRole", None)
-            if user_role is None and hasattr(Qt, "ItemDataRole"):
-                user_role = Qt.ItemDataRole.UserRole
-            item.setData(user_role, res)
-            if res.thumb_bytes:
-                from aqt.qt import QIcon, QPixmap
-
-                pix = QPixmap()
-                if pix.loadFromData(res.thumb_bytes):
-                    item.setIcon(QIcon(pix))
-            title = res.title or res.source_url or res.image_url
-            if title:
-                item.setToolTip(title)
-            item.setText("")
-            item.setSizeHint(QSize(180, 200))
-            self.results_list.addItem(item)
-        if results:
+        self._append_results(results)
+        if self.results:
             self.results_list.setCurrentRow(0)
         else:
             tooltip("No images found.", parent=self)
 
+    def _append_results(self, results: List[ImageResult]):
+        start_idx = len(self.results)
+        self.results.extend(results)
+        for i, res in enumerate(results):
+            item = self._make_item(res, start_idx + i)
+            self.results_list.addItem(item)
+
+    def _make_item(self, res: ImageResult, index: int) -> QListWidgetItem:
+        item = QListWidgetItem()
+        item.setData(self._user_role(), res)
+        self._apply_icon(item, res)
+        title = res.title or res.source_url or res.image_url
+        if title:
+            item.setToolTip(title)
+        item.setText(str(index + 1))
+        item.setSizeHint(QSize(180, 200))
+        return item
+
+    def _apply_icon(self, item: QListWidgetItem, res: ImageResult):
+        if res.thumb_bytes:
+            from aqt.qt import QIcon, QPixmap
+
+            pix = QPixmap()
+            if pix.loadFromData(res.thumb_bytes):
+                item.setIcon(QIcon(pix))
+
+    def _refresh_icons(self):
+        for i in range(self.results_list.count()):
+            item = self.results_list.item(i)
+            res = item.data(self._user_role())
+            if isinstance(res, ImageResult) and res.thumb_bytes:
+                self._apply_icon(item, res)
+
     def _set_busy(self, busy: bool, text: str):
         self.search_btn.setEnabled(not busy)
         self.use_btn.setEnabled(not busy)
+        self.load_more_btn.setEnabled(not busy)
+        self.reload_thumbs_btn.setEnabled(not busy)
         self.results_list.setEnabled(not busy)
         self.status_label.setText(text)
+
+    def _user_role(self):
+        user_role = getattr(Qt, "UserRole", None)
+        if user_role is None and hasattr(Qt, "ItemDataRole"):
+            user_role = Qt.ItemDataRole.UserRole
+        return user_role
+
+    def _start_thumbnail_jobs(self, results: List[ImageResult]):
+        self._thumb_token += 1
+        self._thumb_in_flight = 0
+        self._thumb_queue = [r for r in results if not r.thumb_bytes]
+        self._pump_thumbnail_queue(self._thumb_token)
+
+    def _enqueue_thumbnails(self, results: List[ImageResult], reset: bool = False):
+        if reset:
+            self._thumb_token += 1
+            self._thumb_in_flight = 0
+            self._thumb_queue = []
+        if self._thumb_token <= 0:
+            self._thumb_token = 1
+        self._thumb_queue.extend([r for r in results if not r.thumb_bytes])
+        self._pump_thumbnail_queue(self._thumb_token)
+
+    def _pump_thumbnail_queue(self, token: int):
+        if token != self._thumb_token:
+            return
+        while self._thumb_in_flight < self._thumb_max_in_flight and self._thumb_queue:
+            batch = self._thumb_queue[:1]
+            del self._thumb_queue[:1]
+            self._thumb_in_flight += 1
+
+            def task(batch=batch):
+                attach_thumbnails(batch)
+                return batch
+
+            def on_done(future, token=token):
+                self._thumb_in_flight = max(0, self._thumb_in_flight - 1)
+                if token != self._thumb_token:
+                    return
+                try:
+                    future.result()
+                except Exception:
+                    pass
+                self._refresh_icons()
+                self._pump_thumbnail_queue(token)
+
+            self._run_in_background(task, on_done)
 
 
 class _DummyFuture:

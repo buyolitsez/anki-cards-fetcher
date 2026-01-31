@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
+import base64
+from urllib.parse import unquote_to_bytes
 
 try:
     import requests
@@ -28,29 +30,33 @@ def search_images(
     provider: str = "duckduckgo",
     max_results: int = 12,
     safe_search: bool = True,
-) -> List[ImageResult]:
+    offset: int = 0,
+    allow_fallback: bool = True,
+) -> Tuple[List[ImageResult], str]:
     if not requests:
         raise RuntimeError("requests module not found. Install requests in the Anki environment.")
     q = (query or "").strip()
     if not q:
-        return []
+        return [], provider
     provider = (provider or "duckduckgo").lower()
     if provider == "wikimedia":
-        return _search_wikimedia(q, max_results)
+        return _search_wikimedia(q, max_results, offset=offset), "wikimedia"
     # default/fallback: duckduckgo
     try:
-        results = _search_duckduckgo(q, max_results, safe_search=safe_search)
+        results = _search_duckduckgo(q, max_results, safe_search=safe_search, offset=offset)
         if results:
-            return results
+            return results, "duckduckgo"
     except Exception:
+        if not allow_fallback:
+            raise
         # fallback to Wikimedia on DDG failure
-        pass
-    return _search_wikimedia(q, max_results)
+        return _search_wikimedia(q, max_results, offset=offset), "wikimedia"
+    return [], provider
 
 
 def attach_thumbnails(
     results: List[ImageResult],
-    max_bytes: int = 400_000,
+    max_bytes: int = 800_000,
     timeout: int = 10,
 ):
     if not requests:
@@ -60,21 +66,32 @@ def attach_thumbnails(
         "Accept": "image/*,*/*;q=0.8",
     }
     for res in results:
-        if not res.thumb_url:
+        url = res.thumb_url or res.image_url
+        if not url:
+            continue
+        if url.startswith("data:image/"):
+            data = _decode_data_url(url)
+            if data:
+                res.thumb_bytes = data
             continue
         try:
-            resp = requests.get(res.thumb_url, headers=headers, timeout=timeout)
+            resp = requests.get(url, headers=headers, timeout=timeout)
             if resp.status_code >= 400:
                 continue
             content = resp.content or b""
             if max_bytes and len(content) > max_bytes:
+                continue
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            if ctype and not ctype.startswith("image/"):
                 continue
             res.thumb_bytes = content
         except Exception:
             continue
 
 
-def _search_duckduckgo(query: str, max_results: int, safe_search: bool = True) -> List[ImageResult]:
+def _search_duckduckgo(
+    query: str, max_results: int, safe_search: bool = True, offset: int = 0
+) -> List[ImageResult]:
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -98,6 +115,7 @@ def _search_duckduckgo(query: str, max_results: int, safe_search: bool = True) -
         "vqd": vqd,
         "f": "",
         "p": "1" if safe_search else "-1",
+        "s": str(max(0, int(offset or 0))),
     }
     headers = {
         "User-Agent": USER_AGENT,
@@ -127,7 +145,7 @@ def _search_duckduckgo(query: str, max_results: int, safe_search: bool = True) -
     return results
 
 
-def _search_wikimedia(query: str, max_results: int) -> List[ImageResult]:
+def _search_wikimedia(query: str, max_results: int, offset: int = 0) -> List[ImageResult]:
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "application/json,*/*;q=0.8",
@@ -137,6 +155,7 @@ def _search_wikimedia(query: str, max_results: int) -> List[ImageResult]:
         "generator": "search",
         "gsrsearch": query,
         "gsrlimit": max_results or 12,
+        "gsroffset": max(0, int(offset or 0)),
         "gsrnamespace": 6,
         "prop": "imageinfo",
         "iiprop": "url|mime|size",
@@ -187,5 +206,21 @@ def _extract_ddg_vqd(html: str) -> Optional[str]:
 def _safe_int(val) -> Optional[int]:
     try:
         return int(val)
+    except Exception:
+        return None
+
+
+def _decode_data_url(url: str) -> Optional[bytes]:
+    try:
+        header, data = url.split(",", 1)
+    except ValueError:
+        return None
+    if ";base64" in header:
+        try:
+            return base64.b64decode(data)
+        except Exception:
+            return None
+    try:
+        return unquote_to_bytes(data)
     except Exception:
         return None

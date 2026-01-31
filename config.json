@@ -49,7 +49,7 @@
   "source": "cambridge",
   "image_search": {
     "provider": "duckduckgo",
-    "max_results": 24,
+    "max_results": 8,
     "safe_search": true
   }
 }
