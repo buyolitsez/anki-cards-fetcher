@@ -49,6 +49,35 @@ if "aqt.qt" not in sys.modules:
         def setShortcut(self, *_args, **_kwargs):
             return None
 
+    # Widgets / layouts
     qt.QAction = _Dummy
     qt.QKeySequence = _Dummy
+    qt.QDialog = _Dummy
+    qt.QComboBox = _Dummy
+    qt.QHBoxLayout = _Dummy
+    qt.QLabel = _Dummy
+    qt.QLineEdit = _Dummy
+    qt.QListWidget = _Dummy
+    qt.QListWidgetItem = _Dummy
+    qt.QPushButton = _Dummy
+    qt.QTextEdit = _Dummy
+    qt.QVBoxLayout = _Dummy
+    qt.QCheckBox = _Dummy
+
+    class _DummyMatchFlag:
+        MatchExactly = 0
+
+    qt.Qt = types.SimpleNamespace(MatchFixedString=0, MatchFlag=_DummyMatchFlag)
     sys.modules["aqt.qt"] = qt
+
+# Stub aqt.utils helpers used by UI modules
+if "aqt.utils" not in sys.modules:
+    utils = types.ModuleType("aqt.utils")
+
+    def _noop(*_args, **_kwargs):
+        return None
+
+    utils.showInfo = _noop
+    utils.showWarning = _noop
+    utils.tooltip = _noop
+    sys.modules["aqt.utils"] = utils

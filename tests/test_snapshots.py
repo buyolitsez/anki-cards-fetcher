@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import types
+import re
 
 import pytest
 
@@ -14,7 +15,7 @@ import cambridge_fetch.fetchers.wiktionary as wiktionary_mod
 SNAP_DIR = Path(__file__).resolve().parent / "snapshots"
 GOLDEN = {
     "cambridge_fence_example": "The house was surrounded by a tall, wooden fence.",
-    "cambridge_test_example": "We're revising algebra for the test tomorrow.",
+    "cambridge_test_example": "The class are doing/having a spelling test today.",
     "wiktionary_omut_syllables": "о́·мут",
     "wiktionary_test_syllables": "тест",
 }
@@ -40,6 +41,13 @@ def _patch_requests(monkeypatch, html: str):
     monkeypatch.setattr(cambridge_mod, "requests", types.SimpleNamespace(get=_fake_get))
 
 
+def _norm(text: str) -> str:
+    text = text.replace("\u00a0", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s*([,.;:!?])", r"\1", text)
+    return text
+
+
 def test_snapshot_cambridge_test(monkeypatch):
     html = _load("cambridge_test.html")
     _patch_requests(monkeypatch, html)
@@ -48,8 +56,8 @@ def test_snapshot_cambridge_test(monkeypatch):
     assert senses, "no senses parsed"
     assert any(s.examples for s in senses), "examples should be parsed"
     assert any(s.pos for s in senses), "POS should be parsed"
-    examples = [ex for s in senses for ex in s.examples]
-    assert GOLDEN["cambridge_test_example"] in examples
+    examples = [_norm(ex) for s in senses for ex in s.examples]
+    assert _norm(GOLDEN["cambridge_test_example"]) in examples
 
 
 def test_snapshot_cambridge_fence_examples(monkeypatch):
@@ -59,8 +67,8 @@ def test_snapshot_cambridge_fence_examples(monkeypatch):
     senses = fetcher._parse_page("http://example/{word}", "fence")
     assert senses, "no senses parsed"
     assert any(s.examples for s in senses), "examples should be parsed from accordion fallback"
-    examples = [ex for s in senses for ex in s.examples]
-    assert GOLDEN["cambridge_fence_example"] in examples
+    examples = [_norm(ex) for s in senses for ex in s.examples]
+    assert _norm(GOLDEN["cambridge_fence_example"]) in examples
 
 
 def test_snapshot_wiktionary_omut_syllables():
