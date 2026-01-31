@@ -260,10 +260,21 @@ class EnglishWiktionaryFetcher(BaseFetcher):
 
     def _extract_examples(self, li) -> List[str]:
         examples: List[str] = []
+        seen: set[str] = set()
+        preferred_selectors = [
+            ".quotation",
+            ".quote",
+            ".usage-example",
+            ".example",
+            ".use-with-mention",
+        ]
+        for sel in preferred_selectors:
+            for node in li.select(sel):
+                text = self._clean_example_text(node.get_text(" ", strip=True))
+                self._add_example(examples, seen, text)
         for node in li.select("ul > li, dl > dd"):
-            text = self._clean_text(node.get_text(" ", strip=True))
-            if text and text not in examples:
-                examples.append(text)
+            text = self._clean_example_text(node.get_text(" ", strip=True))
+            self._add_example(examples, seen, text)
         return examples
 
     def _extract_picture(self, lang_root) -> Optional[str]:
@@ -309,6 +320,58 @@ class EnglishWiktionaryFetcher(BaseFetcher):
     def _clean_text(self, text: str) -> str:
         text = re.sub(r"\[\d+\]", "", text)
         return " ".join(text.split())
+
+    def _clean_example_text(self, text: str) -> str:
+        text = self._clean_text(text)
+        if not text:
+            return ""
+        # Strip leading bullets/dashes
+        text = re.sub(r"^[\u2022*\-–—]\s*", "", text)
+        # Remove citation prefix when it looks like a bibliographic entry.
+        if ":" in text and self._looks_like_citation_prefix(text):
+            text = text.split(":")[-1].strip()
+        # Drop trailing citation fragments like "->OCLC"
+        text = re.sub(r"\s*->\s*OCLC.*$", "", text)
+        # Trim leftover punctuation
+        return text.strip(" \t-–—:;")
+
+    def _looks_like_citation_prefix(self, text: str) -> bool:
+        prefix = text.split(":", 1)[0]
+        lower = prefix.lower()
+        if re.search(r"\b(1[5-9]\d{2}|20\d{2})\b", lower):
+            return True
+        tokens = [
+            "published",
+            "chapter",
+            "volume",
+            "vol.",
+            "edition",
+            "press",
+            "company",
+            "oclc",
+            "isbn",
+            "new york",
+            "london",
+        ]
+        if any(tok in lower for tok in tokens):
+            return True
+        return False
+
+    def _add_example(self, examples: List[str], seen: set[str], text: str):
+        if not text:
+            return
+        norm = self._norm_example(text)
+        if not norm or norm in seen:
+            return
+        seen.add(norm)
+        examples.append(text)
+
+    def _norm_example(self, text: str) -> str:
+        text = text.lower()
+        text = re.sub(r"\s+", " ", text).strip()
+        text = re.sub(r"[\"'“”‘’]", "", text)
+        text = re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
+        return text
 
     def _is_audio_url(self, url: str, tag) -> bool:
         if re.search(r"\.(mp3|ogg|wav)\b", url, re.IGNORECASE):
