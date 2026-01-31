@@ -171,3 +171,13 @@
 [wiktionary] lang_section nodes: 3
 [wiktionary] senses parsed: 2, synonyms: 0
 [wiktionary] senses found: 2, picture: False
+[wiktionary] fetch 'омут' -> https://ru.wiktionary.org/wiki/%D0%BE%D0%BC%D1%83%D1%82
+[wiktionary] status 200, len=105940
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 3, synonyms: 3
+[wiktionary] senses found: 3, picture: False
+[wiktionary] fetch 'тест' -> https://ru.wiktionary.org/wiki/%D1%82%D0%B5%D1%81%D1%82
+[wiktionary] status 200, len=126382
+[wiktionary] lang_section nodes: 3
+[wiktionary] senses parsed: 2, synonyms: 0
+[wiktionary] senses found: 2, picture: False

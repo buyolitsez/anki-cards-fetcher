@@ -210,18 +210,27 @@ class WiktionaryFetcher(BaseFetcher):
                 text = parent.get_text("", strip=True)
                 if text:
                     return text
+        # Fallback: first short Cyrillic bold headword line
+        for b in lang_root.select("p > b"):
+            text = b.get_text("", strip=True)
+            if not text:
+                continue
+            if "{" in text or "}" in text:
+                continue
+            if re.search(r"[А-Яа-я]", text) and len(text) <= 40:
+                return text
         # Fallback: any short Cyrillic text containing a middle dot
         for text in lang_root.stripped_strings:
             if "·" in text and re.search(r"[А-Яа-я]", text):
                 # avoid very long strings
-                if len(text) <= 40:
+                if len(text) <= 40 and "{" not in text and "}" not in text:
                     return text
         # Fallback: parse template data-mw that contains {{по-слогам|...}}
         for tag in lang_root.find_all(attrs={"data-mw": True}):
             data = tag.get("data-mw") or ""
             if "по-слогам" not in data:
                 continue
-            m = re.search(r"по-слогам\\|([^}]+)", data)
+            m = re.search(r"по-слогам\|([^}]+)", data)
             if not m:
                 continue
             parts = [p for p in m.group(1).split("|") if p and p != "."]
