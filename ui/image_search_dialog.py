@@ -16,6 +16,7 @@ from aqt.qt import (
     QPushButton,
     QSize,
     QVBoxLayout,
+    QTimer,
     Qt,
 )
 from aqt.utils import showWarning, tooltip
@@ -34,6 +35,10 @@ class ImageSearchDialog(QDialog):
         self.last_query: str = ""
         self.last_provider: str = ""
         self.last_safe: bool = True
+        self._search_token: int = 0
+        self._search_in_progress: bool = False
+        self._load_token: int = 0
+        self._load_in_progress: bool = False
         self._thumb_queue: List[ImageResult] = []
         self._thumb_token: int = 0
         self._thumb_in_flight: int = 0
@@ -123,6 +128,10 @@ class ImageSearchDialog(QDialog):
             showWarning("Enter a search query.")
             return
         self._set_busy(True, f"Searching for \"{query}\"...")
+        self._search_token += 1
+        token = self._search_token
+        self._search_in_progress = True
+        QTimer.singleShot(20000, lambda: self._on_search_timeout(token))
 
         def task():
             image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
@@ -139,7 +148,10 @@ class ImageSearchDialog(QDialog):
             )
             return results, used_provider, safe
 
-        def on_done(future):
+        def on_done(future, token=token):
+            if token != self._search_token:
+                return
+            self._search_in_progress = False
             try:
                 results, used_provider, safe = future.result()
             except Exception as e:
@@ -165,6 +177,10 @@ class ImageSearchDialog(QDialog):
             showWarning("Run a search first.")
             return
         self._set_busy(True, "Loading more images...")
+        self._load_token += 1
+        token = self._load_token
+        self._load_in_progress = True
+        QTimer.singleShot(20000, lambda: self._on_load_timeout(token))
 
         def task():
             image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
@@ -179,7 +195,10 @@ class ImageSearchDialog(QDialog):
             )
             return results
 
-        def on_done(future):
+        def on_done(future, token=token):
+            if token != self._load_token:
+                return
+            self._load_in_progress = False
             try:
                 results = future.result()
             except Exception as e:
@@ -266,6 +285,23 @@ class ImageSearchDialog(QDialog):
         if user_role is None and hasattr(Qt, "ItemDataRole"):
             user_role = Qt.ItemDataRole.UserRole
         return user_role
+
+    def _on_search_timeout(self, token: int):
+        if token != self._search_token or not self._search_in_progress:
+            return
+        # invalidate late results
+        self._search_in_progress = False
+        self._search_token += 1
+        self._set_busy(False, "Search timed out.")
+        showWarning("Image search timed out. Try again or switch provider.")
+
+    def _on_load_timeout(self, token: int):
+        if token != self._load_token or not self._load_in_progress:
+            return
+        self._load_in_progress = False
+        self._load_token += 1
+        self._set_busy(False, "Load more timed out.")
+        showWarning("Load more timed out. Try again.")
 
     def _start_thumbnail_jobs(self, results: List[ImageResult]):
         self._thumb_token += 1

@@ -46,12 +46,14 @@ def search_images(
         results = _search_duckduckgo(q, max_results, safe_search=safe_search, offset=offset)
         if results:
             return results, "duckduckgo"
+        if allow_fallback:
+            return _search_wikimedia(q, max_results, offset=offset), "wikimedia"
+        return [], provider
     except Exception:
         if not allow_fallback:
             raise
         # fallback to Wikimedia on DDG failure
         return _search_wikimedia(q, max_results, offset=offset), "wikimedia"
-    return [], provider
 
 
 def attach_thumbnails(
