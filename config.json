@@ -46,5 +46,10 @@
   ],
   "max_examples": 3,
   "max_synonyms": 4,
-  "source": "cambridge"
+  "source": "cambridge",
+  "image_search": {
+    "provider": "duckduckgo",
+    "max_results": 24,
+    "safe_search": true
+  }
 }

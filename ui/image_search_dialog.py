@@ -5,11 +5,13 @@ from typing import List, Optional
 
 from aqt import mw
 from aqt.qt import (
+    QAbstractItemView,
     QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListView,
     QListWidgetItem,
     QPushButton,
     QSize,
@@ -38,12 +40,28 @@ class ImageSearchDialog(QDialog):
         self.status_label = QLabel("")
 
         self.results_list = QListWidget()
-        self.results_list.setViewMode(QListWidget.IconMode)
+        view_mode = getattr(QListView, "IconMode", None)
+        if view_mode is None and hasattr(QListView, "ViewMode"):
+            view_mode = QListView.ViewMode.IconMode
+        if view_mode is not None:
+            self.results_list.setViewMode(view_mode)
         self.results_list.setIconSize(QSize(160, 160))
-        self.results_list.setResizeMode(QListWidget.Adjust)
-        self.results_list.setMovement(QListWidget.Static)
+        resize_mode = getattr(QListView, "Adjust", None)
+        if resize_mode is None and hasattr(QListView, "ResizeMode"):
+            resize_mode = QListView.ResizeMode.Adjust
+        if resize_mode is not None:
+            self.results_list.setResizeMode(resize_mode)
+        movement = getattr(QListView, "Static", None)
+        if movement is None and hasattr(QListView, "Movement"):
+            movement = QListView.Movement.Static
+        if movement is not None:
+            self.results_list.setMovement(movement)
         self.results_list.setSpacing(8)
-        self.results_list.setSelectionMode(QListWidget.SingleSelection)
+        selection_mode = getattr(QAbstractItemView, "SingleSelection", None)
+        if selection_mode is None and hasattr(QAbstractItemView, "SelectionMode"):
+            selection_mode = QAbstractItemView.SelectionMode.SingleSelection
+        if selection_mode is not None:
+            self.results_list.setSelectionMode(selection_mode)
 
         self.use_btn = QPushButton("Use selected")
         self.cancel_btn = QPushButton("Cancel")
@@ -79,7 +97,10 @@ class ImageSearchDialog(QDialog):
         if not item:
             showWarning("Select an image first.")
             return
-        res = item.data(Qt.UserRole)
+        user_role = getattr(Qt, "UserRole", None)
+        if user_role is None and hasattr(Qt, "ItemDataRole"):
+            user_role = Qt.ItemDataRole.UserRole
+        res = item.data(user_role)
         if not isinstance(res, ImageResult):
             showWarning("Invalid selection.")
             return
@@ -131,7 +152,10 @@ class ImageSearchDialog(QDialog):
         self.results_list.clear()
         for res in results:
             item = QListWidgetItem()
-            item.setData(Qt.UserRole, res)
+            user_role = getattr(Qt, "UserRole", None)
+            if user_role is None and hasattr(Qt, "ItemDataRole"):
+                user_role = Qt.ItemDataRole.UserRole
+            item.setData(user_role, res)
             if res.thumb_bytes:
                 from aqt.qt import QIcon, QPixmap
 
