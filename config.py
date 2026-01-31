@@ -36,6 +36,12 @@ DEFAULT_CONFIG: Dict = {
         "provider": "duckduckgo",
         "max_results": 12,
         "safe_search": True,
+        "pixabay": {
+            "api_key": "",
+        },
+        "pexels": {
+            "api_key": "",
+        },
     },
 }
 
@@ -105,6 +111,12 @@ def get_config() -> Dict:
     image_default = DEFAULT_CONFIG.get("image_search", {})
     stored_image = stored.get("image_search") if isinstance(stored.get("image_search"), dict) else {}
     merged["image_search"] = {**image_default, **(stored_image or {})}
+    default_pixabay = image_default.get("pixabay", {}) if isinstance(image_default, dict) else {}
+    stored_pixabay = merged["image_search"].get("pixabay") if isinstance(merged["image_search"], dict) else {}
+    merged["image_search"]["pixabay"] = {**default_pixabay, **(stored_pixabay or {})}
+    default_pexels = image_default.get("pexels", {}) if isinstance(image_default, dict) else {}
+    stored_pexels = merged["image_search"].get("pexels") if isinstance(merged["image_search"], dict) else {}
+    merged["image_search"]["pexels"] = {**default_pexels, **(stored_pexels or {})}
     return merged
 
 
@@ -126,6 +138,12 @@ def save_config(updates: Dict):
     image_default = DEFAULT_CONFIG.get("image_search", {})
     stored_image = cfg.get("image_search") if isinstance(cfg.get("image_search"), dict) else {}
     cfg["image_search"] = {**image_default, **(stored_image or {})}
+    default_pixabay = image_default.get("pixabay", {}) if isinstance(image_default, dict) else {}
+    stored_pixabay = cfg["image_search"].get("pixabay") if isinstance(cfg["image_search"], dict) else {}
+    cfg["image_search"]["pixabay"] = {**default_pixabay, **(stored_pixabay or {})}
+    default_pexels = image_default.get("pexels", {}) if isinstance(image_default, dict) else {}
+    stored_pexels = cfg["image_search"].get("pexels") if isinstance(cfg["image_search"], dict) else {}
+    cfg["image_search"]["pexels"] = {**default_pexels, **(stored_pexels or {})}
     try:
         mw.addonManager.writeConfig(ADDON_NAME, cfg)
     except Exception:

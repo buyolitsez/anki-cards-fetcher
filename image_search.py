@@ -32,28 +32,46 @@ def search_images(
     safe_search: bool = True,
     offset: int = 0,
     allow_fallback: bool = True,
-) -> Tuple[List[ImageResult], str]:
+    pixabay_api_key: Optional[str] = None,
+    pexels_api_key: Optional[str] = None,
+) -> Tuple[List[ImageResult], str, bool]:
     if not requests:
         raise RuntimeError("requests module not found. Install requests in the Anki environment.")
     q = (query or "").strip()
     if not q:
-        return [], provider
+        return [], provider, False
     provider = (provider or "duckduckgo").lower()
+    if provider == "pixabay":
+        return _search_pixabay(
+            q,
+            max_results,
+            safe_search=safe_search,
+            offset=offset,
+            api_key=pixabay_api_key,
+        ), "pixabay", False
+    if provider == "pexels":
+        return _search_pexels(
+            q,
+            max_results,
+            safe_search=safe_search,
+            offset=offset,
+            api_key=pexels_api_key,
+        ), "pexels", False
     if provider == "wikimedia":
-        return _search_wikimedia(q, max_results, offset=offset), "wikimedia"
+        return _search_wikimedia(q, max_results, offset=offset), "wikimedia", False
     # default/fallback: duckduckgo
     try:
         results = _search_duckduckgo(q, max_results, safe_search=safe_search, offset=offset)
         if results:
-            return results, "duckduckgo"
+            return results, "duckduckgo", False
         if allow_fallback:
-            return _search_wikimedia(q, max_results, offset=offset), "wikimedia"
-        return [], provider
+            return _search_wikimedia(q, max_results, offset=offset), "wikimedia", True
+        return [], provider, False
     except Exception:
         if not allow_fallback:
             raise
         # fallback to Wikimedia on DDG failure
-        return _search_wikimedia(q, max_results, offset=offset), "wikimedia"
+        return _search_wikimedia(q, max_results, offset=offset), "wikimedia", True
 
 
 def attach_thumbnails(
@@ -144,6 +162,129 @@ def _search_duckduckgo(
         )
         if max_results and len(results) >= max_results:
             break
+    return results
+
+
+def _search_pixabay(
+    query: str,
+    max_results: int,
+    safe_search: bool,
+    offset: int,
+    api_key: Optional[str],
+) -> List[ImageResult]:
+    if not api_key:
+        raise RuntimeError("Pixabay provider requires API key. Configure it in Settings.")
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json,*/*;q=0.8",
+    }
+    results: List[ImageResult] = []
+    per_page = int(max_results or 20)
+    per_page = max(3, min(per_page, 200))
+    page = max(0, int(offset or 0)) // per_page + 1
+    skip = max(0, int(offset or 0)) % per_page
+    remaining = max_results or per_page
+    while remaining > 0:
+        params = {
+            "key": api_key,
+            "q": query,
+            "image_type": "photo",
+            "per_page": min(per_page, remaining),
+            "page": page,
+            "safesearch": "true" if safe_search else "false",
+        }
+        resp = requests.get("https://pixabay.com/api/", params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json() if resp.text else {}
+        hits = data.get("hits") or []
+        if skip:
+            hits = hits[skip:]
+            skip = 0
+        if not hits:
+            break
+        for item in hits:
+            image_url = item.get("largeImageURL") or item.get("webformatURL")
+            if not image_url:
+                continue
+            results.append(
+                ImageResult(
+                    image_url=image_url,
+                    thumb_url=item.get("previewURL") or item.get("webformatURL"),
+                    title=item.get("tags"),
+                    source_url=item.get("pageURL"),
+                    width=_safe_int(item.get("imageWidth")),
+                    height=_safe_int(item.get("imageHeight")),
+                )
+            )
+            if max_results and len(results) >= max_results:
+                break
+        if max_results and len(results) >= max_results:
+            break
+        if len(hits) < params["per_page"]:
+            break
+        page += 1
+        remaining = max_results - len(results) if max_results else 0
+    return results
+
+
+def _search_pexels(
+    query: str,
+    max_results: int,
+    safe_search: bool,
+    offset: int,
+    api_key: Optional[str],
+) -> List[ImageResult]:
+    if not api_key:
+        raise RuntimeError("Pexels provider requires API key. Configure it in Settings.")
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json,*/*;q=0.8",
+        "Authorization": api_key,
+    }
+    results: List[ImageResult] = []
+    per_page = int(max_results or 15)
+    per_page = max(3, min(per_page, 80))
+    page = max(0, int(offset or 0)) // per_page + 1
+    skip = max(0, int(offset or 0)) % per_page
+    remaining = max_results or per_page
+    while remaining > 0:
+        params = {
+            "query": query,
+            "per_page": min(per_page, remaining),
+            "page": page,
+        }
+        resp = requests.get("https://api.pexels.com/v1/search", params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json() if resp.text else {}
+        items = data.get("photos") or []
+        if skip:
+            items = items[skip:]
+            skip = 0
+        if not items:
+            break
+        for item in items:
+            src = item.get("src") or {}
+            image_url = src.get("large") or src.get("medium") or src.get("original")
+            if not image_url:
+                continue
+            results.append(
+                ImageResult(
+                    image_url=image_url,
+                    thumb_url=src.get("tiny") or src.get("small") or src.get("medium"),
+                    title=item.get("alt") or item.get("url"),
+                    source_url=item.get("url"),
+                    width=_safe_int(item.get("width")),
+                    height=_safe_int(item.get("height")),
+                )
+            )
+            if max_results and len(results) >= max_results:
+                break
+        if max_results and len(results) >= max_results:
+            break
+        if len(items) < params["per_page"]:
+            break
+        page += 1
+        remaining = max_results - len(results) if max_results else 0
     return results
 
 

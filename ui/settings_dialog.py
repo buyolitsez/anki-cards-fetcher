@@ -76,7 +76,11 @@ class SettingsDialog(QDialog):
         self.image_provider = QComboBox()
         self.image_provider.addItem("DuckDuckGo (no key)", "duckduckgo")
         self.image_provider.addItem("Wikimedia Commons", "wikimedia")
+        self.image_provider.addItem("Pixabay (API key)", "pixabay")
+        self.image_provider.addItem("Pexels (API key)", "pexels")
         image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
+        pixabay_cfg = image_cfg.get("pixabay", {}) if isinstance(image_cfg.get("pixabay"), dict) else {}
+        pexels_cfg = image_cfg.get("pexels", {}) if isinstance(image_cfg.get("pexels"), dict) else {}
         img_provider = image_cfg.get("provider", "duckduckgo")
         idx = self.image_provider.findData(img_provider)
         if idx == -1:
@@ -95,6 +99,12 @@ class SettingsDialog(QDialog):
 
         self.image_safe = QCheckBox("Safe search (adult filter)")
         self.image_safe.setChecked(bool(image_cfg.get("safe_search", True)))
+        self.pixabay_key_edit = QLineEdit()
+        self.pixabay_key_edit.setPlaceholderText("Pixabay API key")
+        self.pixabay_key_edit.setText(pixabay_cfg.get("api_key") or "")
+        self.pexels_key_edit = QLineEdit()
+        self.pexels_key_edit.setPlaceholderText("Pexels API key")
+        self.pexels_key_edit.setText(pexels_cfg.get("api_key") or "")
 
         # buttons
         save_btn = QPushButton("Save")
@@ -122,6 +132,10 @@ class SettingsDialog(QDialog):
         form.addWidget(QLabel("Max results:"))
         form.addWidget(self.image_max)
         form.addWidget(self.image_safe)
+        form.addWidget(QLabel("Pixabay API key:"))
+        form.addWidget(self.pixabay_key_edit)
+        form.addWidget(QLabel("Pexels API key:"))
+        form.addWidget(self.pexels_key_edit)
 
         # field mappings
         form.addWidget(QLabel("Field mapping (comma-separated per logical key):"))
@@ -188,6 +202,12 @@ class SettingsDialog(QDialog):
             "provider": self.image_provider.currentData() or "duckduckgo",
             "max_results": int(self.image_max.currentData() or 12),
             "safe_search": self.image_safe.isChecked(),
+            "pixabay": {
+                "api_key": self.pixabay_key_edit.text().strip(),
+            },
+            "pexels": {
+                "api_key": self.pexels_key_edit.text().strip(),
+            },
         }
         # collect mapping
         fmap = {}
