@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import base64
-from urllib.parse import unquote_to_bytes
+from urllib.parse import unquote_to_bytes, urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 try:
     import requests
@@ -112,19 +115,13 @@ def attach_thumbnails(
 def _search_duckduckgo(
     query: str, max_results: int, safe_search: bool = True, offset: int = 0
 ) -> List[ImageResult]:
-    headers = {
+    timeout = 15
+    html_headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
-    resp = requests.get(
-        "https://duckduckgo.com/",
-        params={"q": query, "iax": "images", "ia": "images"},
-        headers=headers,
-        timeout=15,
-    )
-    resp.raise_for_status()
-    vqd = _extract_ddg_vqd(resp.text or "")
+    vqd, referer = _fetch_ddg_vqd(query, html_headers, timeout=timeout)
     if not vqd:
         raise RuntimeError("DuckDuckGo token not found.")
 
@@ -139,23 +136,30 @@ def _search_duckduckgo(
     }
     headers = {
         "User-Agent": USER_AGENT,
-        "Accept": "application/json,text/javascript,*/*;q=0.8",
-        "Referer": "https://duckduckgo.com/",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "en-US,en;q=0.9",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": referer,
+        "Origin": "https://duckduckgo.com",
+        "DNT": "1",
     }
-    resp = requests.get("https://duckduckgo.com/i.js", params=params, headers=headers, timeout=15)
-    resp.raise_for_status()
-    data = resp.json() if resp.text else {}
+    data = _ddg_fetch_json("https://duckduckgo.com/i.js", params, headers, timeout=timeout)
+    items = data.get("results") or data.get("data") or []
+    if not isinstance(items, list):
+        items = []
     results: List[ImageResult] = []
-    for item in data.get("results", []) or []:
-        image_url = item.get("image")
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        image_url = item.get("image") or item.get("image_url") or item.get("media")
         if not image_url:
             continue
         results.append(
             ImageResult(
                 image_url=image_url,
-                thumb_url=item.get("thumbnail"),
-                title=item.get("title"),
-                source_url=item.get("url"),
+                thumb_url=item.get("thumbnail") or item.get("thumb"),
+                title=item.get("title") or item.get("alt"),
+                source_url=item.get("url") or item.get("source"),
                 width=_safe_int(item.get("width")),
                 height=_safe_int(item.get("height")),
             )
@@ -333,11 +337,51 @@ def _search_wikimedia(query: str, max_results: int, offset: int = 0) -> List[Ima
     return results
 
 
+def _fetch_ddg_vqd(query: str, headers: dict, timeout: int = 15) -> Tuple[Optional[str], str]:
+    candidates = [
+        {"q": query, "t": "h_", "iax": "images", "ia": "images"},
+        {"q": query},
+    ]
+    last_url = "https://duckduckgo.com/"
+    for params in candidates:
+        url = "https://duckduckgo.com/?" + urlencode(params)
+        html = _ddg_fetch_text(url, headers, timeout=timeout)
+        last_url = url
+        vqd = _extract_ddg_vqd(html)
+        if vqd:
+            return vqd, last_url
+    return None, last_url
+
+
+def _ddg_fetch_text(url: str, headers: dict, timeout: int = 15) -> str:
+    req = Request(url, headers=headers)
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+    except HTTPError as exc:
+        raise RuntimeError(f"DuckDuckGo request failed ({exc.code}).") from exc
+    return data.decode("utf-8", "replace")
+
+
+def _ddg_fetch_json(url: str, params: dict, headers: dict, timeout: int = 15) -> dict:
+    req = Request(url + "?" + urlencode(params), headers=headers)
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+    except HTTPError as exc:
+        raise RuntimeError(f"DuckDuckGo request failed ({exc.code}).") from exc
+    try:
+        return json.loads(data.decode("utf-8", "replace"))
+    except Exception as exc:
+        raise RuntimeError("DuckDuckGo returned invalid JSON.") from exc
+
+
 def _extract_ddg_vqd(html: str) -> Optional[str]:
     patterns = [
-        r"vqd=([^\&]+)\&",
-        r'vqd=\"([^\"]+)\"',
-        r"vqd='([^']+)'",
+        r"vqd=['\"]([A-Za-z0-9-]+)['\"]",
+        r"vqd=([A-Za-z0-9-]+)&",
+        r"vqd=([A-Za-z0-9-]+)",
+        r"\"vqd\"\s*:\s*\"([^\"]+)\"",
     ]
     for pat in patterns:
         m = re.search(pat, html)
