@@ -217,10 +217,13 @@ class WiktionaryFetcher(BaseFetcher):
 
         # collect definitions
         for li in iter_section("Значение"):
-            raw = clean_txt(li.get_text(" ", strip=True))
+            examples = self._extract_examples_from_li(li)
+            raw = clean_txt(self._definition_text_from_li(li))
             if not raw:
                 continue
-            definition, examples = self._split_examples(raw)
+            definition, raw_examples = self._split_examples(raw)
+            if not examples:
+                examples = raw_examples
             senses.append(
                 Sense(
                     definition=definition,
@@ -247,6 +250,64 @@ class WiktionaryFetcher(BaseFetcher):
                 s.synonyms = synonyms[:]
         log(f"[wiktionary] senses parsed: {len(senses)}, synonyms: {len(synonyms)}")
         return senses
+
+    def _definition_text_from_li(self, li) -> str:
+        """Extract definition text without example/source blocks."""
+        try:
+            soup = BeautifulSoup(str(li), "html.parser")
+            li_copy = soup.find("li")
+        except Exception:
+            li_copy = None
+        if not li_copy:
+            return ""
+        for bad in li_copy.select(".example-fullblock, .example-block, .source, .example-details"):
+            bad.decompose()
+        return li_copy.get_text(" ", strip=True)
+
+    def _extract_examples_from_li(self, li) -> List[str]:
+        """Extract examples from Wiktionary example markup and preserve highlighted term as <b>."""
+        examples: List[str] = []
+        seen: set[str] = set()
+        blocks = li.select(".example-fullblock .example-block, .example-block")
+        for block in blocks:
+            html = self._clean_example_block_html(block)
+            if not html:
+                continue
+            key = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html)).strip().casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            examples.append(html)
+        return examples
+
+    def _clean_example_block_html(self, block) -> str:
+        try:
+            soup = BeautifulSoup(str(block), "html.parser")
+            node = soup.find()
+        except Exception:
+            node = None
+        if not node:
+            return ""
+        for bad in node.select(".example-details, .citation-source, .example-date"):
+            bad.decompose()
+        for selected in node.select(".example-select"):
+            selected.name = "b"
+            selected.attrs = {}
+        for tag in list(node.find_all(True)):
+            if tag.name == "b":
+                tag.attrs = {}
+                continue
+            if tag.name == "br":
+                tag.replace_with(" ")
+                continue
+            tag.unwrap()
+        html = node.decode_contents()
+        html = html.replace("\u00a0", " ")
+        html = re.sub(r"\s+", " ", html).strip()
+        html = re.sub(r"\s+([,.;:!?])", r"\1", html)
+        html = re.sub(r"<b>\s+", "<b>", html)
+        html = re.sub(r"\s+</b>", "</b>", html)
+        return html
 
     def _extract_picture(self, lang_root) -> Optional[str]:
         """Pick a representative image from the language section, if any."""

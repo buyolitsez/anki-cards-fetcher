@@ -96,3 +96,28 @@ def test_wiktionary_ignores_semantic_ref_markers_and_backlinks():
     assert senses[0].definition == "устар., также церк. пещера"
     assert senses[0].examples == ["пример 1", "пример 2"]
     assert senses[0].synonyms == ["пещера", "притон", "гнездилище"]
+
+
+def test_wiktionary_uses_wiktionary_example_highlight_markup():
+    html = """
+    <section aria-labelledby="Русский">
+      <section aria-labelledby="Значение">
+        <ol>
+          <li>
+            очень большой человек
+            <span class="example-fullblock">
+              ◆ <span class="example-block">Исполи́н стоял у <b class="example-select">реки</b>.
+                <span class="example-details"><i>источник</i></span>
+              </span>
+            </span>
+          </li>
+        </ol>
+      </section>
+    </section>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    lang = soup.select_one("section")
+    fetcher = _make_fetcher()
+    senses = fetcher._parse_senses(lang)
+    assert len(senses) == 1
+    assert senses[0].examples == ["Исполи́н стоял у <b>реки</b>."]
