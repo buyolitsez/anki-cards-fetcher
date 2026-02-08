@@ -15,6 +15,10 @@ class BaseFetcher:
     def fetch(self, word: str) -> List[Sense]:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def suggest(self, word: str, limit: int = 8) -> List[str]:
+        """Return typo/fuzzy suggestions for a query word."""
+        return []
+
     @property
     def supports_audio(self) -> bool:
         return False

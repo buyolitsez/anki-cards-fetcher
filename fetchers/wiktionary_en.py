@@ -66,6 +66,7 @@ class EnglishWiktionaryFetcher(BaseFetcher):
     ID = "wiktionary_en"
     LABEL = "en.wiktionary.org (en)"
     BASE = "https://en.wiktionary.org/wiki/{word}"
+    API_BASE = "https://en.wiktionary.org/w/api.php"
 
     def fetch(self, word: str) -> List[Sense]:
         if not requests:
@@ -103,6 +104,54 @@ class EnglishWiktionaryFetcher(BaseFetcher):
                     s.picture_referer = "https://en.wiktionary.org/"
         log(f"[wiktionary-en] senses found: {len(senses)}, picture: {bool(picture)}")
         return senses
+
+    def suggest(self, word: str, limit: int = 8) -> List[str]:
+        if not requests:
+            return []
+        query = word.strip()
+        if not query:
+            return []
+        safe_limit = max(1, min(int(limit), 20))
+        try:
+            resp = requests.get(
+                self.API_BASE,
+                headers={"User-Agent": USER_AGENT},
+                params={
+                    "action": "opensearch",
+                    "search": query,
+                    "limit": safe_limit,
+                    "namespace": 0,
+                    "format": "json",
+                },
+                timeout=15,
+            )
+        except Exception as e:
+            log(f"[wiktionary-en] suggest failed: {e}")
+            return []
+        if resp.status_code >= 400:
+            return []
+        try:
+            payload = resp.json()
+        except Exception:
+            return []
+        if not isinstance(payload, list) or len(payload) < 2 or not isinstance(payload[1], list):
+            return []
+        out: List[str] = []
+        seen: set[str] = set()
+        for item in payload[1]:
+            if not isinstance(item, str):
+                continue
+            candidate = item.strip()
+            if not candidate:
+                continue
+            key = candidate.casefold()
+            if key == query.casefold() or key in seen:
+                continue
+            seen.add(key)
+            out.append(candidate)
+            if len(out) >= safe_limit:
+                break
+        return out
 
     # ----------------------- helpers -----------------------
     def _language_headline(self, soup, language: str):

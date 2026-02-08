@@ -98,6 +98,20 @@ class SettingsDialog(QDialog):
         self.image_safe = QCheckBox("Safe search (adult filter)")
         self.image_safe.setChecked(bool(image_cfg.get("safe_search", True)))
 
+        # typo suggestions settings
+        typo_cfg = self.cfg.get("typo_suggestions", {}) if isinstance(self.cfg.get("typo_suggestions"), dict) else {}
+        self.suggest_enabled = QCheckBox("Suggest close matches when nothing is found")
+        self.suggest_enabled.setChecked(bool(typo_cfg.get("enabled", True)))
+        self.suggest_max = QComboBox()
+        for n in (3, 5, 8, 10, 12, 15):
+            self.suggest_max.addItem(str(n), n)
+        typo_max = int(typo_cfg.get("max_results") or 8)
+        idx = self.suggest_max.findData(typo_max)
+        if idx == -1:
+            self.suggest_max.addItem(str(typo_max), typo_max)
+            idx = self.suggest_max.findData(typo_max)
+        self.suggest_max.setCurrentIndex(idx)
+
         # buttons
         save_btn = QPushButton("Save")
         cancel_btn = QPushButton("Close")
@@ -124,6 +138,11 @@ class SettingsDialog(QDialog):
         form.addWidget(QLabel("Max results:"))
         form.addWidget(self.image_max)
         form.addWidget(self.image_safe)
+
+        form.addWidget(QLabel("Typos / fuzzy suggestions:"))
+        form.addWidget(self.suggest_enabled)
+        form.addWidget(QLabel("Max suggestion results:"))
+        form.addWidget(self.suggest_max)
 
         # field mappings
         form.addWidget(QLabel("Field mapping (comma-separated per logical key):"))
@@ -191,6 +210,10 @@ class SettingsDialog(QDialog):
             "max_results": int(self.image_max.currentData() or 12),
             "safe_search": self.image_safe.isChecked(),
         }
+        typo_suggestions = {
+            "enabled": self.suggest_enabled.isChecked(),
+            "max_results": int(self.suggest_max.currentData() or 8),
+        }
         # collect mapping
         fmap = {}
         for key, edit in self.map_edits.items():
@@ -217,6 +240,7 @@ class SettingsDialog(QDialog):
                 "field_map": fmap,
                 "wiktionary": {"field_map": wiki_fmap},
                 "image_search": image_search,
+                "typo_suggestions": typo_suggestions,
             }
         )
         tooltip("Настройки сохранены.", parent=self)

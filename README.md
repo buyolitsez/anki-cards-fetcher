@@ -6,6 +6,7 @@ An Anki add-on that fills notes with data from Cambridge Dictionary, ru.wiktiona
 - Fetches word, definitions, examples, synonyms, and part of speech.
 - Extracts IPA and audio when available.
 - Adds an image to a note field via a dedicated image search dialog.
+- Suggests close word variants when no exact match is found (typo/fuzzy suggestions).
 - Writes data into your fields through configurable field mapping.
 
 ## Image Search
@@ -49,5 +50,6 @@ Available options:
 - default source;
 - Cambridge dialect priority (UK/US);
 - image result count and `safe_search`;
+- typo suggestions on/off and max number of suggestions;
 - field mapping (`word`, `definition`, `examples`, `synonyms`, `pos`, `ipa`, `audio`, `picture`);
 - RU Wiktionary mapping (`wiktionary.field_map.syllables`).

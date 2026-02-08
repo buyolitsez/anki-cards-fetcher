@@ -39,6 +39,10 @@ DEFAULT_CONFIG: Dict = {
         "max_results": 12,
         "safe_search": True,
     },
+    "typo_suggestions": {
+        "enabled": True,
+        "max_results": 8,
+    },
 }
 
 # Add-on id helper (Anki may require the folder name in some versions)
@@ -105,6 +109,7 @@ def get_config() -> Dict:
         }
     )
     merged["image_search"] = normalize_image_search(stored.get("image_search"))
+    merged["typo_suggestions"] = normalize_typo_suggestions(stored.get("typo_suggestions"))
     return merged
 
 
@@ -124,6 +129,7 @@ def save_config(updates: Dict):
         }
     )
     cfg["image_search"] = normalize_image_search(cfg.get("image_search"))
+    cfg["typo_suggestions"] = normalize_typo_suggestions(cfg.get("typo_suggestions"))
     try:
         mw.addonManager.writeConfig(ADDON_NAME, cfg)
     except Exception:
@@ -185,4 +191,21 @@ def normalize_image_search(raw) -> Dict:
         max_results = int(out["max_results"] or 12)
     out["max_results"] = max(1, min(max_results, 100))
     out["safe_search"] = bool(raw.get("safe_search", out["safe_search"]))
+    return out
+
+
+def normalize_typo_suggestions(raw) -> Dict:
+    default = DEFAULT_CONFIG.get("typo_suggestions", {})
+    out = {
+        "enabled": bool(default.get("enabled", True)),
+        "max_results": int(default.get("max_results", 8) or 8),
+    }
+    if not isinstance(raw, dict):
+        return out
+    out["enabled"] = bool(raw.get("enabled", out["enabled"]))
+    try:
+        max_results = int(raw.get("max_results"))
+    except Exception:
+        max_results = out["max_results"]
+    out["max_results"] = max(1, min(max_results, 20))
     return out

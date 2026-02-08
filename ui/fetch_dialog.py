@@ -174,6 +174,7 @@ class FetchDialog(QDialog):
         return base_map
 
     def on_fetch(self):
+        self.cfg = get_config()
         word = self.word_edit.text().strip()
         if not word:
             showWarning("Enter a word first.")
@@ -186,6 +187,8 @@ class FetchDialog(QDialog):
             traceback.print_exc()
             return
         if not senses:
+            if self._try_typo_suggestions(word, fetcher):
+                return
             showInfo("No definitions found.")
             return
         self.senses = senses
@@ -194,6 +197,56 @@ class FetchDialog(QDialog):
             item = QListWidgetItem(sense.preview_text(self.cfg["max_examples"], self.cfg["max_synonyms"]))
             self.sense_list.addItem(item)
         self.sense_list.setCurrentRow(0)
+
+    def _try_typo_suggestions(self, word: str, fetcher) -> bool:
+        typo_cfg = self.cfg.get("typo_suggestions") if isinstance(self.cfg.get("typo_suggestions"), dict) else {}
+        if not typo_cfg or not bool(typo_cfg.get("enabled", True)):
+            return False
+        try:
+            max_results = int(typo_cfg.get("max_results") or 8)
+        except Exception:
+            max_results = 8
+        max_results = max(1, min(max_results, 20))
+        try:
+            suggestions = fetcher.suggest(word, limit=max_results)
+        except Exception:
+            traceback.print_exc()
+            return False
+        suggestions = [s.strip() for s in suggestions if isinstance(s, str) and s.strip()]
+        if not suggestions:
+            return False
+        selected = self._pick_suggestion(word, suggestions)
+        if not selected:
+            return True
+        self.word_edit.setText(selected)
+        self.on_fetch()
+        return True
+
+    def _pick_suggestion(self, word: str, suggestions: List[str]) -> Optional[str]:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Suggestions / Варианты")
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(f"No exact match for '{word}'.\nТочного совпадения нет. Выберите вариант:"))
+        lst = QListWidget()
+        for option in suggestions:
+            lst.addItem(option)
+        if suggestions:
+            lst.setCurrentRow(0)
+        layout.addWidget(lst)
+        btns = QHBoxLayout()
+        use_btn = QPushButton("Try selected")
+        close_btn = QPushButton("Close")
+        use_btn.clicked.connect(dlg.accept)
+        close_btn.clicked.connect(dlg.reject)
+        lst.itemDoubleClicked.connect(lambda _: dlg.accept())
+        btns.addWidget(use_btn)
+        btns.addWidget(close_btn)
+        layout.addLayout(btns)
+        dlg.setLayout(layout)
+        if not dlg.exec():
+            return None
+        item = lst.currentItem()
+        return item.text().strip() if item else None
 
     def on_select(self, row: int):
         if row < 0 or row >= len(self.senses):

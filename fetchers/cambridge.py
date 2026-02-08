@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Dict, List, Optional
+from urllib.parse import quote
 
 try:
     import requests
@@ -24,6 +25,7 @@ class CambridgeFetcher(BaseFetcher):
     LABEL = "Cambridge Dictionary (en)"
     BASE = "https://dictionary.cambridge.org/dictionary/english/{word}"
     AMP_BASE = "https://dictionary.cambridge.org/amp/english/{word}"
+    SPELLCHECK_BASE = "https://dictionary.cambridge.org/spellcheck/english/?q={word}"
     _last_soup = None
 
     def __init__(self, cfg):
@@ -58,6 +60,28 @@ class CambridgeFetcher(BaseFetcher):
                     for s in senses:
                         s.audio_urls = global_audio.copy()
         return senses
+
+    def suggest(self, word: str, limit: int = 8) -> List[str]:
+        if not requests or not BeautifulSoup:
+            return []
+        query = word.strip()
+        if not query:
+            return []
+        url = self.SPELLCHECK_BASE.format(word=quote(query))
+        try:
+            resp = requests.get(
+                url,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+                timeout=15,
+            )
+        except Exception:
+            return []
+        if resp.status_code >= 400:
+            return []
+        return self._parse_spellcheck_suggestions(resp.text, query, limit)
 
     def _parse_page(self, base_url: str, word: str) -> List[Sense]:
         url = base_url.format(word=word.strip().replace(" ", "-"))
@@ -133,6 +157,38 @@ class CambridgeFetcher(BaseFetcher):
                 if text and text not in examples:
                     examples.append(text)
         return examples
+
+    def _parse_spellcheck_suggestions(self, html: str, query: str, limit: int) -> List[str]:
+        soup = BeautifulSoup(html, "html.parser")
+        out: List[str] = []
+        seen: set[str] = set()
+        for a in soup.select("ul.hul-u li a"):
+            href = (a.get("href") or "").strip()
+            if "/search/" not in href and "q=" not in href:
+                continue
+            text = self._text(a)
+            self._append_suggestion(out, seen, text, query, limit)
+            if len(out) >= limit:
+                break
+        return out
+
+    def _append_suggestion(
+        self,
+        out: List[str],
+        seen: set[str],
+        suggestion: str,
+        query: str,
+        limit: int,
+    ) -> None:
+        if not suggestion:
+            return
+        key = suggestion.casefold()
+        if key == query.casefold() or key in seen:
+            return
+        seen.add(key)
+        out.append(suggestion)
+        if len(out) > limit:
+            del out[limit:]
 
     def _parse_examples(self, block) -> List[str]:
         examples: List[str] = []

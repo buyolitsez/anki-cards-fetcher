@@ -46,10 +46,14 @@
   ],
   "max_examples": 3,
   "max_synonyms": 4,
-  "source": "wiktionary",
+  "source": "wiktionary_en",
   "image_search": {
     "provider": "duckduckgo",
     "max_results": 6,
     "safe_search": true
+  },
+  "typo_suggestions": {
+    "enabled": true,
+    "max_results": 8
   }
 }
