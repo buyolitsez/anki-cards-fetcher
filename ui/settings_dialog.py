@@ -9,7 +9,9 @@ from aqt.qt import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
+    QWidget,
 )
 from aqt.utils import tooltip
 
@@ -180,11 +182,22 @@ class SettingsDialog(QDialog):
             self.wiki_map_edits[key] = edit
             form.addWidget(edit)
 
+        content = QWidget(self)
+        content.setLayout(form)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+
         buttons = QHBoxLayout()
         buttons.addWidget(save_btn)
         buttons.addWidget(cancel_btn)
-        form.addLayout(buttons)
-        self.setLayout(form)
+
+        root = QVBoxLayout()
+        root.addWidget(scroll)
+        root.addLayout(buttons)
+        self.setLayout(root)
+        self.setMinimumWidth(560)
+        self.resize(640, 760)
 
     def _sync_dialect_checks(self, prefer: str):
         if prefer == "uk":

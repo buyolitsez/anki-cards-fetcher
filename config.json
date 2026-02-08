@@ -49,11 +49,11 @@
   "source": "wiktionary",
   "image_search": {
     "provider": "duckduckgo",
-    "max_results": 6,
+    "max_results": 12,
     "safe_search": true
   },
   "typo_suggestions": {
     "enabled": true,
-    "max_results": 8
+    "max_results": 16
   }
 }

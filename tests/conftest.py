@@ -63,6 +63,9 @@ if "aqt.qt" not in sys.modules:
     qt.QTextEdit = _Dummy
     qt.QVBoxLayout = _Dummy
     qt.QCheckBox = _Dummy
+    qt.QWidget = _Dummy
+    qt.QScrollArea = _Dummy
+    qt.QTimer = _Dummy
 
     class _DummyMatchFlag:
         MatchExactly = 0
