@@ -41,7 +41,7 @@ DEFAULT_CONFIG: Dict = {
     },
     "typo_suggestions": {
         "enabled": True,
-        "max_results": 8,
+        "max_results": 12,
     },
 }
 
@@ -198,7 +198,7 @@ def normalize_typo_suggestions(raw) -> Dict:
     default = DEFAULT_CONFIG.get("typo_suggestions", {})
     out = {
         "enabled": bool(default.get("enabled", True)),
-        "max_results": int(default.get("max_results", 8) or 8),
+        "max_results": int(default.get("max_results", 12) or 12),
     }
     if not isinstance(raw, dict):
         return out
@@ -207,5 +207,5 @@ def normalize_typo_suggestions(raw) -> Dict:
         max_results = int(raw.get("max_results"))
     except Exception:
         max_results = out["max_results"]
-    out["max_results"] = max(1, min(max_results, 20))
+    out["max_results"] = max(1, min(max_results, 40))
     return out

@@ -103,9 +103,9 @@ class SettingsDialog(QDialog):
         self.suggest_enabled = QCheckBox("Suggest close matches when nothing is found")
         self.suggest_enabled.setChecked(bool(typo_cfg.get("enabled", True)))
         self.suggest_max = QComboBox()
-        for n in (3, 5, 8, 10, 12, 15):
+        for n in (5, 8, 12, 16, 20, 24, 30):
             self.suggest_max.addItem(str(n), n)
-        typo_max = int(typo_cfg.get("max_results") or 8)
+        typo_max = int(typo_cfg.get("max_results") or 12)
         idx = self.suggest_max.findData(typo_max)
         if idx == -1:
             self.suggest_max.addItem(str(typo_max), typo_max)
@@ -212,7 +212,7 @@ class SettingsDialog(QDialog):
         }
         typo_suggestions = {
             "enabled": self.suggest_enabled.isChecked(),
-            "max_results": int(self.suggest_max.currentData() or 8),
+            "max_results": int(self.suggest_max.currentData() or 12),
         }
         # collect mapping
         fmap = {}

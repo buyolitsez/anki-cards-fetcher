@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 import traceback
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from aqt import dialogs, mw
 from aqt.qt import (
@@ -14,6 +15,7 @@ from aqt.qt import (
     QListWidgetItem,
     QPushButton,
     QTextEdit,
+    QTimer,
     QVBoxLayout,
     Qt,
 )
@@ -23,7 +25,137 @@ from ..config import get_config, save_config
 from ..fetchers import get_fetcher_by_id, get_fetchers
 from ..media import download_to_media
 from ..models import Sense
+from ..typo import fallback_queries, rank_suggestions
 from .image_search_dialog import ImageSearchDialog
+
+
+class SuggestionPickerDialog(QDialog):
+    def __init__(
+        self,
+        parent,
+        word: str,
+        candidates: List[str],
+        validate_word: Callable[[str], bool],
+        target_count: int,
+    ):
+        super().__init__(parent)
+        self.selected_word: Optional[str] = None
+        self._validate_word = validate_word
+        self._target_count = max(1, int(target_count))
+        self._total = len(candidates)
+        self._seen: set[str] = set()
+        self._executor: Optional[ThreadPoolExecutor] = None
+        self._future_to_word: Dict[Future, str] = {}
+        self._checked = 0
+        self._confirmed = 0
+        self._finished = False
+
+        self.setWindowTitle("Suggestions / Варианты")
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(f"No exact match for '{word}'.\nТочного совпадения нет. Проверка вариантов..."))
+        self.status_label = QLabel("Checking candidates...")
+        layout.addWidget(self.status_label)
+        self.lst = QListWidget()
+        layout.addWidget(self.lst)
+        btns = QHBoxLayout()
+        self.use_btn = QPushButton("Try selected")
+        close_btn = QPushButton("Close")
+        self.use_btn.setEnabled(False)
+        self.use_btn.clicked.connect(self._accept_selected)
+        close_btn.clicked.connect(self.reject)
+        self.lst.itemDoubleClicked.connect(lambda _: self._accept_selected())
+        self.lst.currentRowChanged.connect(lambda _: self.use_btn.setEnabled(self.lst.currentItem() is not None))
+        btns.addWidget(self.use_btn)
+        btns.addWidget(close_btn)
+        layout.addLayout(btns)
+        self.setLayout(layout)
+
+        max_workers = min(8, max(3, self._target_count))
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="typo-check")
+        for candidate in candidates:
+            future = self._executor.submit(self._safe_validate, candidate)
+            self._future_to_word[future] = candidate
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(100)
+        self._timer.timeout.connect(self._poll_futures)
+        self._timer.start()
+        self._update_status()
+
+    def _safe_validate(self, candidate: str) -> bool:
+        try:
+            return bool(self._validate_word(candidate))
+        except Exception:
+            return False
+
+    def _poll_futures(self):
+        if self._finished:
+            return
+        done = [f for f in list(self._future_to_word.keys()) if f.done()]
+        if not done:
+            return
+        for future in done:
+            candidate = self._future_to_word.pop(future)
+            self._checked += 1
+            is_valid = False
+            try:
+                is_valid = bool(future.result())
+            except Exception:
+                is_valid = False
+            if is_valid:
+                key = candidate.casefold()
+                if key not in self._seen:
+                    self._seen.add(key)
+                    self.lst.addItem(candidate)
+                    self._confirmed += 1
+                    if self.lst.count() == 1:
+                        self.lst.setCurrentRow(0)
+        if self._confirmed >= self._target_count:
+            self._finish(cancel_pending=True)
+        elif not self._future_to_word:
+            self._finish(cancel_pending=False)
+        self._update_status()
+
+    def _update_status(self):
+        if self._finished:
+            if self._confirmed:
+                self.status_label.setText(f"Ready: {self._confirmed} valid suggestions.")
+            else:
+                self.status_label.setText("No valid suggestions found.")
+            return
+        self.status_label.setText(
+            f"Checking... {self._checked}/{self._total} | valid: {self._confirmed}"
+        )
+
+    def _accept_selected(self):
+        item = self.lst.currentItem()
+        if not item:
+            return
+        self.selected_word = item.text().strip()
+        if not self.selected_word:
+            return
+        self.accept()
+
+    def _finish(self, cancel_pending: bool):
+        if self._finished:
+            return
+        self._finished = True
+        if self._timer.isActive():
+            self._timer.stop()
+        self._shutdown_executor(cancel_pending=cancel_pending)
+
+    def _shutdown_executor(self, cancel_pending: bool):
+        if not self._executor:
+            return
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=cancel_pending)
+        except TypeError:
+            self._executor.shutdown(wait=False)
+        self._executor = None
+
+    def closeEvent(self, event):  # type: ignore[override]
+        self._finish(cancel_pending=True)
+        super().closeEvent(event)
 
 
 class FetchDialog(QDialog):
@@ -203,50 +335,54 @@ class FetchDialog(QDialog):
         if not typo_cfg or not bool(typo_cfg.get("enabled", True)):
             return False
         try:
-            max_results = int(typo_cfg.get("max_results") or 8)
+            max_results = int(typo_cfg.get("max_results") or 12)
         except Exception:
-            max_results = 8
-        max_results = max(1, min(max_results, 20))
-        try:
-            suggestions = fetcher.suggest(word, limit=max_results)
-        except Exception:
-            traceback.print_exc()
-            return False
-        suggestions = [s.strip() for s in suggestions if isinstance(s, str) and s.strip()]
+            max_results = 12
+        max_results = max(1, min(max_results, 40))
+        suggestions = self._collect_typo_suggestions(word, fetcher, max_results)
         if not suggestions:
             return False
-        selected = self._pick_suggestion(word, suggestions)
+        selected = self._pick_suggestion(word, suggestions, max_results)
         if not selected:
             return True
         self.word_edit.setText(selected)
         self.on_fetch()
         return True
 
-    def _pick_suggestion(self, word: str, suggestions: List[str]) -> Optional[str]:
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Suggestions / Варианты")
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"No exact match for '{word}'.\nТочного совпадения нет. Выберите вариант:"))
-        lst = QListWidget()
-        for option in suggestions:
-            lst.addItem(option)
-        if suggestions:
-            lst.setCurrentRow(0)
-        layout.addWidget(lst)
-        btns = QHBoxLayout()
-        use_btn = QPushButton("Try selected")
-        close_btn = QPushButton("Close")
-        use_btn.clicked.connect(dlg.accept)
-        close_btn.clicked.connect(dlg.reject)
-        lst.itemDoubleClicked.connect(lambda _: dlg.accept())
-        btns.addWidget(use_btn)
-        btns.addWidget(close_btn)
-        layout.addLayout(btns)
-        dlg.setLayout(layout)
+    def _collect_typo_suggestions(self, word: str, fetcher, max_results: int) -> List[str]:
+        candidates: List[str] = []
+        query_count = max(max_results * 3, 18)
+        fetch_limit = max(max_results * 6, 24)
+        for query in fallback_queries(word, max_queries=query_count):
+            try:
+                suggested = fetcher.suggest(query, limit=fetch_limit)
+            except Exception:
+                traceback.print_exc()
+                suggested = []
+            if query.casefold() != word.casefold():
+                candidates.append(query)
+            candidates.extend([s for s in suggested if isinstance(s, str)])
+        ranked_limit = max(max_results * 6, 30)
+        return rank_suggestions(word, candidates, ranked_limit)
+
+    def _pick_suggestion(self, word: str, suggestions: List[str], max_results: int) -> Optional[str]:
+        source_id = self.source_combo.currentData() or "cambridge"
+        cfg_snapshot = get_config()
+
+        def validate(candidate: str) -> bool:
+            checker = get_fetcher_by_id(source_id, cfg_snapshot)
+            return bool(checker.fetch(candidate))
+
+        dlg = SuggestionPickerDialog(
+            self,
+            word=word,
+            candidates=suggestions,
+            validate_word=validate,
+            target_count=max_results,
+        )
         if not dlg.exec():
             return None
-        item = lst.currentItem()
-        return item.text().strip() if item else None
+        return dlg.selected_word
 
     def on_select(self, row: int):
         if row < 0 or row >= len(self.senses):
