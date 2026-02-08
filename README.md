@@ -21,6 +21,26 @@ An Anki add-on that fills notes with data from Cambridge Dictionary, ru.wiktiona
 4. Optionally click `Find Image` and choose an image.
 5. Click `Insert` or `Insert & Edit`.
 
+## Screenshots
+<table>
+  <tr>
+    <td align="center">
+      <a href="examples/basic_usage.png">
+        <img src="examples/basic_usage.png" alt="Basic usage dialog" width="460">
+      </a>
+      <br>
+      <em>Main fetch dialog.</em>
+    </td>
+    <td align="center">
+      <a href="examples/image_finder.png">
+        <img src="examples/image_finder.png" alt="Image finder dialog" width="460">
+      </a>
+      <br>
+      <em>Image finder dialog.</em>
+    </td>
+  </tr>
+</table>
+
 ## Settings
 Open `Tools -> Dictionary Fetch - Settings`.
 
