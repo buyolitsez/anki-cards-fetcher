@@ -7,7 +7,7 @@ from .cambridge import CambridgeFetcher
 from .wiktionary import WiktionaryFetcher
 from .wiktionary_en import EnglishWiktionaryFetcher
 
-# Регистр доступных источников
+# Registry of available sources
 REGISTER: Dict[str, Type[BaseFetcher]] = {
     CambridgeFetcher.ID: CambridgeFetcher,
     WiktionaryFetcher.ID: WiktionaryFetcher,
@@ -16,7 +16,7 @@ REGISTER: Dict[str, Type[BaseFetcher]] = {
 
 
 def get_fetchers(cfg) -> List[BaseFetcher]:
-    """Создаёт экземпляры доступных фетчеров."""
+    """Create instances of available fetchers."""
     return [
         fetcher_cls(cfg)
         for fetcher_cls in REGISTER.values()

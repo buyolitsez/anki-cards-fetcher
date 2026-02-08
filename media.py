@@ -20,9 +20,9 @@ def _requests():
 
 
 def download_to_media(url: str, referer: Optional[str] = "https://dictionary.cambridge.org/") -> Tuple[str, str]:
-    """Скачивает файл и кладёт в медиатеку. Возвращает (filename, local_path).
+    """Download a file into Anki media. Returns (filename, local_path).
 
-    Дополнительно проверяем content-type, чтобы не сохранить HTML-капчу вместо аудио/картинки.
+    Also validates content-type to avoid saving HTML/captcha pages as audio/images.
     """
     requests = _requests()
     if not requests:

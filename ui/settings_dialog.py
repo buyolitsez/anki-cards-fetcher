@@ -15,6 +15,7 @@ from aqt.utils import tooltip
 
 from ..config import DEFAULT_CONFIG, get_config, save_config
 from ..fetchers import get_fetchers
+from ..image_search import DEFAULT_IMAGE_PROVIDER, get_image_provider_choices
 
 
 class SettingsDialog(QDialog):
@@ -74,14 +75,11 @@ class SettingsDialog(QDialog):
 
         # image search settings
         self.image_provider = QComboBox()
-        self.image_provider.addItem("DuckDuckGo (no key)", "duckduckgo")
-        self.image_provider.addItem("Wikimedia Commons", "wikimedia")
-        self.image_provider.addItem("Pixabay (API key)", "pixabay")
-        self.image_provider.addItem("Pexels (API key)", "pexels")
+        for label, provider_id in get_image_provider_choices():
+            self.image_provider.addItem(label, provider_id)
+        self.image_provider.setEnabled(self.image_provider.count() > 1)
         image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
-        pixabay_cfg = image_cfg.get("pixabay", {}) if isinstance(image_cfg.get("pixabay"), dict) else {}
-        pexels_cfg = image_cfg.get("pexels", {}) if isinstance(image_cfg.get("pexels"), dict) else {}
-        img_provider = image_cfg.get("provider", "duckduckgo")
+        img_provider = image_cfg.get("provider", DEFAULT_IMAGE_PROVIDER)
         idx = self.image_provider.findData(img_provider)
         if idx == -1:
             idx = 0
@@ -99,12 +97,6 @@ class SettingsDialog(QDialog):
 
         self.image_safe = QCheckBox("Safe search (adult filter)")
         self.image_safe.setChecked(bool(image_cfg.get("safe_search", True)))
-        self.pixabay_key_edit = QLineEdit()
-        self.pixabay_key_edit.setPlaceholderText("Pixabay API key")
-        self.pixabay_key_edit.setText(pixabay_cfg.get("api_key") or "")
-        self.pexels_key_edit = QLineEdit()
-        self.pexels_key_edit.setPlaceholderText("Pexels API key")
-        self.pexels_key_edit.setText(pexels_cfg.get("api_key") or "")
 
         # buttons
         save_btn = QPushButton("Save")
@@ -132,10 +124,6 @@ class SettingsDialog(QDialog):
         form.addWidget(QLabel("Max results:"))
         form.addWidget(self.image_max)
         form.addWidget(self.image_safe)
-        form.addWidget(QLabel("Pixabay API key:"))
-        form.addWidget(self.pixabay_key_edit)
-        form.addWidget(QLabel("Pexels API key:"))
-        form.addWidget(self.pexels_key_edit)
 
         # field mappings
         form.addWidget(QLabel("Field mapping (comma-separated per logical key):"))
@@ -199,15 +187,9 @@ class SettingsDialog(QDialog):
         source = self.source_combo.currentData() or DEFAULT_CONFIG["source"]
         dialect_priority = ["uk", "us"] if self.uk_first.isChecked() else ["us", "uk"]
         image_search = {
-            "provider": self.image_provider.currentData() or "duckduckgo",
+            "provider": self.image_provider.currentData() or DEFAULT_IMAGE_PROVIDER,
             "max_results": int(self.image_max.currentData() or 12),
             "safe_search": self.image_safe.isChecked(),
-            "pixabay": {
-                "api_key": self.pixabay_key_edit.text().strip(),
-            },
-            "pexels": {
-                "api_key": self.pexels_key_edit.text().strip(),
-            },
         }
         # collect mapping
         fmap = {}

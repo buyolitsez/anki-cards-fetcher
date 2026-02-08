@@ -8,6 +8,8 @@ from typing import Dict
 
 from aqt import mw
 
+DEFAULT_IMAGE_PROVIDER = "duckduckgo"
+
 DEFAULT_CONFIG: Dict = {
     "note_type": None,
     "deck": None,
@@ -30,22 +32,16 @@ DEFAULT_CONFIG: Dict = {
     "dialect_priority": ["us", "uk"],
     "max_examples": 2,
     "max_synonyms": 4,
-    # источник словаря: cambridge | wiktionary | wiktionary_en
+    # Dictionary source: cambridge | wiktionary | wiktionary_en
     "source": "cambridge",
     "image_search": {
-        "provider": "duckduckgo",
+        "provider": DEFAULT_IMAGE_PROVIDER,
         "max_results": 12,
         "safe_search": True,
-        "pixabay": {
-            "api_key": "",
-        },
-        "pexels": {
-            "api_key": "",
-        },
     },
 }
 
-# add-on id helper (Anki иногда требует имя папки)
+# Add-on id helper (Anki may require the folder name in some versions)
 try:
     ADDON_NAME = mw.addonManager.addonFromModule(__name__.split(".")[0])
 except Exception:
@@ -108,15 +104,7 @@ def get_config() -> Dict:
             **(stored_wiki.get("field_map") or {}),
         }
     )
-    image_default = DEFAULT_CONFIG.get("image_search", {})
-    stored_image = stored.get("image_search") if isinstance(stored.get("image_search"), dict) else {}
-    merged["image_search"] = {**image_default, **(stored_image or {})}
-    default_pixabay = image_default.get("pixabay", {}) if isinstance(image_default, dict) else {}
-    stored_pixabay = merged["image_search"].get("pixabay") if isinstance(merged["image_search"], dict) else {}
-    merged["image_search"]["pixabay"] = {**default_pixabay, **(stored_pixabay or {})}
-    default_pexels = image_default.get("pexels", {}) if isinstance(image_default, dict) else {}
-    stored_pexels = merged["image_search"].get("pexels") if isinstance(merged["image_search"], dict) else {}
-    merged["image_search"]["pexels"] = {**default_pexels, **(stored_pexels or {})}
+    merged["image_search"] = normalize_image_search(stored.get("image_search"))
     return merged
 
 
@@ -135,15 +123,7 @@ def save_config(updates: Dict):
             **(stored_wiki.get("field_map") or {}),
         }
     )
-    image_default = DEFAULT_CONFIG.get("image_search", {})
-    stored_image = cfg.get("image_search") if isinstance(cfg.get("image_search"), dict) else {}
-    cfg["image_search"] = {**image_default, **(stored_image or {})}
-    default_pixabay = image_default.get("pixabay", {}) if isinstance(image_default, dict) else {}
-    stored_pixabay = cfg["image_search"].get("pixabay") if isinstance(cfg["image_search"], dict) else {}
-    cfg["image_search"]["pixabay"] = {**default_pixabay, **(stored_pixabay or {})}
-    default_pexels = image_default.get("pexels", {}) if isinstance(image_default, dict) else {}
-    stored_pexels = cfg["image_search"].get("pexels") if isinstance(cfg["image_search"], dict) else {}
-    cfg["image_search"]["pexels"] = {**default_pexels, **(stored_pexels or {})}
+    cfg["image_search"] = normalize_image_search(cfg.get("image_search"))
     try:
         mw.addonManager.writeConfig(ADDON_NAME, cfg)
     except Exception:
@@ -184,3 +164,25 @@ def normalize_field_map(fmap: Dict) -> Dict[str, list]:
         if names:
             normalized[key] = names
     return normalized
+
+
+def normalize_image_search(raw) -> Dict:
+    """Keep only supported image-search keys and valid provider."""
+    default = DEFAULT_CONFIG.get("image_search", {})
+    out = {
+        "provider": default.get("provider", DEFAULT_IMAGE_PROVIDER),
+        "max_results": default.get("max_results", 12),
+        "safe_search": bool(default.get("safe_search", True)),
+    }
+    if not isinstance(raw, dict):
+        return out
+    provider = (raw.get("provider") or out["provider"] or DEFAULT_IMAGE_PROVIDER)
+    provider = provider.strip().lower() if isinstance(provider, str) else DEFAULT_IMAGE_PROVIDER
+    out["provider"] = provider if provider == DEFAULT_IMAGE_PROVIDER else DEFAULT_IMAGE_PROVIDER
+    try:
+        max_results = int(raw.get("max_results"))
+    except Exception:
+        max_results = int(out["max_results"] or 12)
+    out["max_results"] = max(1, min(max_results, 100))
+    out["safe_search"] = bool(raw.get("safe_search", out["safe_search"]))
+    return out

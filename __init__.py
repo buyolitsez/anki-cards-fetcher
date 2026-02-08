@@ -46,7 +46,7 @@ def on_main_window_ready(mw_obj=None):
 if hasattr(gui_hooks, "main_window_did_init"):
     gui_hooks.main_window_did_init.append(on_main_window_ready)
 else:
-    # на старых версиях добавим сразу, если окно уже есть
+    # On older versions, register immediately if the main window already exists
     try:
         on_main_window_ready(mw)
     except Exception:

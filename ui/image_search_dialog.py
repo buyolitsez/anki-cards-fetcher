@@ -23,7 +23,13 @@ from aqt.qt import (
 from aqt.utils import showWarning, tooltip
 
 from ..config import get_config, save_config
-from ..image_search import ImageResult, attach_thumbnails, search_images
+from ..image_search import (
+    DEFAULT_IMAGE_PROVIDER,
+    ImageResult,
+    attach_thumbnails,
+    get_image_provider_choices,
+    search_images,
+)
 
 
 class ImageSearchDialog(QDialog):
@@ -133,15 +139,7 @@ class ImageSearchDialog(QDialog):
             showWarning("Enter a search query.")
             return
         image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
-        provider = self.provider_combo.currentData() or image_cfg.get("provider", "duckduckgo")
-        pixabay_cfg = image_cfg.get("pixabay", {}) if isinstance(image_cfg.get("pixabay"), dict) else {}
-        pexels_cfg = image_cfg.get("pexels", {}) if isinstance(image_cfg.get("pexels"), dict) else {}
-        if provider == "pixabay" and not (pixabay_cfg.get("api_key") or "").strip():
-            showWarning("Pixabay API key is missing. Add it in Settings.")
-            return
-        if provider == "pexels" and not (pexels_cfg.get("api_key") or "").strip():
-            showWarning("Pexels API key is missing. Add it in Settings.")
-            return
+        provider = self.provider_combo.currentData() or image_cfg.get("provider", DEFAULT_IMAGE_PROVIDER)
 
         self._set_busy(True, f"Searching for \"{query}\"...")
         self._search_token += 1
@@ -153,26 +151,22 @@ class ImageSearchDialog(QDialog):
             image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
             max_results = int(image_cfg.get("max_results") or 12)
             safe = bool(image_cfg.get("safe_search", True))
-            pixabay_cfg = image_cfg.get("pixabay", {}) if isinstance(image_cfg.get("pixabay"), dict) else {}
-            pexels_cfg = image_cfg.get("pexels", {}) if isinstance(image_cfg.get("pexels"), dict) else {}
-            results, used_provider, used_fallback = search_images(
+            results, used_provider, _ = search_images(
                 query,
                 provider=provider,
                 max_results=max_results,
                 safe_search=safe,
                 offset=0,
                 allow_fallback=False,
-                pixabay_api_key=pixabay_cfg.get("api_key"),
-                pexels_api_key=pexels_cfg.get("api_key"),
             )
-            return results, used_provider, safe, used_fallback
+            return results, used_provider, safe
 
         def on_done(future, token=token):
             if token != self._search_token:
                 return
             self._search_in_progress = False
             try:
-                results, used_provider, safe, used_fallback = future.result()
+                results, used_provider, safe = future.result()
             except Exception as e:
                 self._set_busy(False, "")
                 showWarning(f"Image search failed: {e}")
@@ -181,10 +175,7 @@ class ImageSearchDialog(QDialog):
             self.last_query = query
             self.last_provider = used_provider
             self.last_safe = safe
-            if used_fallback:
-                self._set_busy(False, f"Found {len(results)} images (fallback to {used_provider}).")
-                showWarning(f"Primary provider failed or returned no results. Used fallback: {used_provider}.")
-            elif not results:
+            if not results:
                 self._set_busy(False, f"No images found ({used_provider}).")
             else:
                 self._set_busy(False, f"Found {len(results)} images.")
@@ -202,15 +193,9 @@ class ImageSearchDialog(QDialog):
             showWarning("Run a search first.")
             return
         image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
-        provider = self.provider_combo.currentData() or self.last_provider or image_cfg.get("provider", "duckduckgo")
-        pixabay_cfg = image_cfg.get("pixabay", {}) if isinstance(image_cfg.get("pixabay"), dict) else {}
-        pexels_cfg = image_cfg.get("pexels", {}) if isinstance(image_cfg.get("pexels"), dict) else {}
-        if provider == "pixabay" and not (pixabay_cfg.get("api_key") or "").strip():
-            showWarning("Pixabay API key is missing. Add it in Settings.")
-            return
-        if provider == "pexels" and not (pexels_cfg.get("api_key") or "").strip():
-            showWarning("Pexels API key is missing. Add it in Settings.")
-            return
+        provider = self.provider_combo.currentData() or self.last_provider or image_cfg.get(
+            "provider", DEFAULT_IMAGE_PROVIDER
+        )
         self._set_busy(True, "Loading more images...")
         self._load_token += 1
         token = self._load_token
@@ -220,8 +205,6 @@ class ImageSearchDialog(QDialog):
         def task():
             image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
             max_results = int(image_cfg.get("max_results") or 12)
-            pixabay_cfg = image_cfg.get("pixabay", {}) if isinstance(image_cfg.get("pixabay"), dict) else {}
-            pexels_cfg = image_cfg.get("pexels", {}) if isinstance(image_cfg.get("pexels"), dict) else {}
             results, _, _ = search_images(
                 self.last_query,
                 provider=provider,
@@ -229,8 +212,6 @@ class ImageSearchDialog(QDialog):
                 safe_search=self.last_safe,
                 offset=offset,
                 allow_fallback=False,
-                pixabay_api_key=pixabay_cfg.get("api_key"),
-                pexels_api_key=pexels_cfg.get("api_key"),
             )
             return results
 
@@ -327,19 +308,18 @@ class ImageSearchDialog(QDialog):
 
     def _populate_providers(self):
         self.provider_combo.clear()
-        self.provider_combo.addItem("DuckDuckGo", "duckduckgo")
-        self.provider_combo.addItem("Wikimedia", "wikimedia")
-        self.provider_combo.addItem("Pixabay", "pixabay")
-        self.provider_combo.addItem("Pexels", "pexels")
+        for label, provider_id in get_image_provider_choices():
+            self.provider_combo.addItem(label, provider_id)
+        self.provider_combo.setEnabled(self.provider_combo.count() > 1)
         image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
-        provider = image_cfg.get("provider", "duckduckgo")
+        provider = image_cfg.get("provider", DEFAULT_IMAGE_PROVIDER)
         idx = self.provider_combo.findData(provider)
         if idx == -1:
             idx = 0
         self.provider_combo.setCurrentIndex(idx)
 
     def on_provider_change(self):
-        provider = self.provider_combo.currentData() or "duckduckgo"
+        provider = self.provider_combo.currentData() or DEFAULT_IMAGE_PROVIDER
         image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
         save_config({"image_search": {**image_cfg, "provider": provider}})
         self.cfg = get_config()
@@ -351,7 +331,7 @@ class ImageSearchDialog(QDialog):
         self._search_in_progress = False
         self._search_token += 1
         self._set_busy(False, "Search timed out.")
-        showWarning("Image search timed out. Try again or switch provider.")
+        showWarning("Image search timed out. Try again.")
 
     def _on_load_timeout(self, token: int):
         if token != self._load_token or not self._load_in_progress:

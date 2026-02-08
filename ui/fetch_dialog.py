@@ -159,7 +159,7 @@ class FetchDialog(QDialog):
 
     def _current_fetcher(self):
         source_id = self.source_combo.currentData() or "cambridge"
-        # обновляем cfg перед созданием, т.к. могли поменять настройки
+        # Reload config before creating fetcher because settings may have changed
         cfg = get_config()
         return get_fetcher_by_id(source_id, cfg)
 
@@ -393,6 +393,6 @@ class FetchDialog(QDialog):
             traceback.print_exc()
 
     def closeEvent(self, event):  # type: ignore[override]
-        # страхуемся: сохраняем выбранные тип и колоду даже если сигналы не сработали
+        # Safety: persist selected note type/deck even if signals were not triggered
         self._remember_selection()
         super().closeEvent(event)

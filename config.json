@@ -50,12 +50,6 @@
   "image_search": {
     "provider": "duckduckgo",
     "max_results": 6,
-    "safe_search": true,
-    "pixabay": {
-      "api_key": ""
-    },
-    "pexels": {
-      "api_key": "9iuNDXslX91a1wqfPIXOiphN4YS1pqUpaECCqYiKOBZ65uDrY1d13GGM"
-    }
+    "safe_search": true
   }
 }

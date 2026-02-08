@@ -16,6 +16,11 @@ except Exception:  # pragma: no cover - runtime guard
 
 from .media import USER_AGENT
 
+DEFAULT_IMAGE_PROVIDER = "duckduckgo"
+# Keep provider registry even with a single provider so engines can be restored later
+# without changing UI/config wiring.
+IMAGE_PROVIDER_CHOICES: Tuple[Tuple[str, str], ...] = (("DuckDuckGo", DEFAULT_IMAGE_PROVIDER),)
+
 
 @dataclass
 class ImageResult:
@@ -28,53 +33,31 @@ class ImageResult:
     thumb_bytes: Optional[bytes] = None
 
 
+def get_image_provider_choices() -> Tuple[Tuple[str, str], ...]:
+    return IMAGE_PROVIDER_CHOICES
+
+
 def search_images(
     query: str,
-    provider: str = "duckduckgo",
+    provider: str = DEFAULT_IMAGE_PROVIDER,
     max_results: int = 12,
     safe_search: bool = True,
     offset: int = 0,
     allow_fallback: bool = True,
-    pixabay_api_key: Optional[str] = None,
-    pexels_api_key: Optional[str] = None,
 ) -> Tuple[List[ImageResult], str, bool]:
     if not requests:
         raise RuntimeError("requests module not found. Install requests in the Anki environment.")
     q = (query or "").strip()
     if not q:
         return [], provider, False
-    provider = (provider or "duckduckgo").lower()
-    if provider == "pixabay":
-        return _search_pixabay(
-            q,
-            max_results,
-            safe_search=safe_search,
-            offset=offset,
-            api_key=pixabay_api_key,
-        ), "pixabay", False
-    if provider == "pexels":
-        return _search_pexels(
-            q,
-            max_results,
-            safe_search=safe_search,
-            offset=offset,
-            api_key=pexels_api_key,
-        ), "pexels", False
-    if provider == "wikimedia":
-        return _search_wikimedia(q, max_results, offset=offset), "wikimedia", False
-    # default/fallback: duckduckgo
-    try:
-        results = _search_duckduckgo(q, max_results, safe_search=safe_search, offset=offset)
-        if results:
-            return results, "duckduckgo", False
-        if allow_fallback:
-            return _search_wikimedia(q, max_results, offset=offset), "wikimedia", True
-        return [], provider, False
-    except Exception:
-        if not allow_fallback:
-            raise
-        # fallback to Wikimedia on DDG failure
-        return _search_wikimedia(q, max_results, offset=offset), "wikimedia", True
+    _ = allow_fallback  # kept for compatibility with existing call sites
+    provider = (provider or DEFAULT_IMAGE_PROVIDER).lower()
+    supported = {provider_id for _, provider_id in IMAGE_PROVIDER_CHOICES}
+    if provider not in supported:
+        provider = DEFAULT_IMAGE_PROVIDER
+    # Current release supports only DuckDuckGo, but provider plumbing stays generic.
+    results = _search_duckduckgo(q, max_results, safe_search=safe_search, offset=offset)
+    return results, provider, False
 
 
 def attach_thumbnails(
@@ -162,174 +145,6 @@ def _search_duckduckgo(
                 source_url=item.get("url") or item.get("source"),
                 width=_safe_int(item.get("width")),
                 height=_safe_int(item.get("height")),
-            )
-        )
-        if max_results and len(results) >= max_results:
-            break
-    return results
-
-
-def _search_pixabay(
-    query: str,
-    max_results: int,
-    safe_search: bool,
-    offset: int,
-    api_key: Optional[str],
-) -> List[ImageResult]:
-    if not api_key:
-        raise RuntimeError("Pixabay provider requires API key. Configure it in Settings.")
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "application/json,*/*;q=0.8",
-    }
-    results: List[ImageResult] = []
-    per_page = int(max_results or 20)
-    per_page = max(3, min(per_page, 200))
-    page = max(0, int(offset or 0)) // per_page + 1
-    skip = max(0, int(offset or 0)) % per_page
-    remaining = max_results or per_page
-    while remaining > 0:
-        params = {
-            "key": api_key,
-            "q": query,
-            "image_type": "photo",
-            "per_page": min(per_page, remaining),
-            "page": page,
-            "safesearch": "true" if safe_search else "false",
-        }
-        resp = requests.get("https://pixabay.com/api/", params=params, headers=headers, timeout=15)
-        resp.raise_for_status()
-        data = resp.json() if resp.text else {}
-        hits = data.get("hits") or []
-        if skip:
-            hits = hits[skip:]
-            skip = 0
-        if not hits:
-            break
-        for item in hits:
-            image_url = item.get("largeImageURL") or item.get("webformatURL")
-            if not image_url:
-                continue
-            results.append(
-                ImageResult(
-                    image_url=image_url,
-                    thumb_url=item.get("previewURL") or item.get("webformatURL"),
-                    title=item.get("tags"),
-                    source_url=item.get("pageURL"),
-                    width=_safe_int(item.get("imageWidth")),
-                    height=_safe_int(item.get("imageHeight")),
-                )
-            )
-            if max_results and len(results) >= max_results:
-                break
-        if max_results and len(results) >= max_results:
-            break
-        if len(hits) < params["per_page"]:
-            break
-        page += 1
-        remaining = max_results - len(results) if max_results else 0
-    return results
-
-
-def _search_pexels(
-    query: str,
-    max_results: int,
-    safe_search: bool,
-    offset: int,
-    api_key: Optional[str],
-) -> List[ImageResult]:
-    if not api_key:
-        raise RuntimeError("Pexels provider requires API key. Configure it in Settings.")
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "application/json,*/*;q=0.8",
-        "Authorization": api_key,
-    }
-    results: List[ImageResult] = []
-    per_page = int(max_results or 15)
-    per_page = max(3, min(per_page, 80))
-    page = max(0, int(offset or 0)) // per_page + 1
-    skip = max(0, int(offset or 0)) % per_page
-    remaining = max_results or per_page
-    while remaining > 0:
-        params = {
-            "query": query,
-            "per_page": min(per_page, remaining),
-            "page": page,
-        }
-        resp = requests.get("https://api.pexels.com/v1/search", params=params, headers=headers, timeout=15)
-        resp.raise_for_status()
-        data = resp.json() if resp.text else {}
-        items = data.get("photos") or []
-        if skip:
-            items = items[skip:]
-            skip = 0
-        if not items:
-            break
-        for item in items:
-            src = item.get("src") or {}
-            image_url = src.get("large") or src.get("medium") or src.get("original")
-            if not image_url:
-                continue
-            results.append(
-                ImageResult(
-                    image_url=image_url,
-                    thumb_url=src.get("tiny") or src.get("small") or src.get("medium"),
-                    title=item.get("alt") or item.get("url"),
-                    source_url=item.get("url"),
-                    width=_safe_int(item.get("width")),
-                    height=_safe_int(item.get("height")),
-                )
-            )
-            if max_results and len(results) >= max_results:
-                break
-        if max_results and len(results) >= max_results:
-            break
-        if len(items) < params["per_page"]:
-            break
-        page += 1
-        remaining = max_results - len(results) if max_results else 0
-    return results
-
-
-def _search_wikimedia(query: str, max_results: int, offset: int = 0) -> List[ImageResult]:
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "application/json,*/*;q=0.8",
-    }
-    params = {
-        "action": "query",
-        "generator": "search",
-        "gsrsearch": query,
-        "gsrlimit": max_results or 12,
-        "gsroffset": max(0, int(offset or 0)),
-        "gsrnamespace": 6,
-        "prop": "imageinfo",
-        "iiprop": "url|mime|size",
-        "iiurlwidth": 220,
-        "format": "json",
-    }
-    resp = requests.get("https://commons.wikimedia.org/w/api.php", params=params, headers=headers, timeout=15)
-    resp.raise_for_status()
-    data = resp.json() if resp.text else {}
-    pages = (data.get("query") or {}).get("pages") or {}
-    results: List[ImageResult] = []
-    for page in pages.values():
-        infos = page.get("imageinfo") or []
-        if not infos:
-            continue
-        info = infos[0]
-        url = info.get("url")
-        if not url:
-            continue
-        results.append(
-            ImageResult(
-                image_url=url,
-                thumb_url=info.get("thumburl"),
-                title=page.get("title"),
-                source_url=url,
-                width=_safe_int(info.get("width")),
-                height=_safe_int(info.get("height")),
             )
         )
         if max_results and len(results) >= max_results:

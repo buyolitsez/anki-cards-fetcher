@@ -79,16 +79,16 @@ class WiktionaryFetcher(BaseFetcher):
 
     # ----------------------- helpers -----------------------
     def _language_section(self, soup, language: str):
-        """Возвращает тег секции (section/h2 блок) для заданного языка."""
+        """Return the section tag (section/h2 block) for the requested language."""
         lang_cf = language.casefold()
 
-        # 1) parsoid section с aria-labelledby="Русский"
+        # 1) Parsoid section with aria-labelledby matching the target language
         for sec in soup.find_all("section"):
             aria = (sec.get("aria-labelledby") or "").casefold()
             if lang_cf in aria or "русск" in aria:
                 return sec
 
-        # 2) классический h1/h2 с id или текстом Русский
+        # 2) Classic h1/h2 where id/text matches the target language
         headline = soup.find(id=language)
         if not headline:
             for span in soup.select(".mw-headline"):
@@ -117,7 +117,7 @@ class WiktionaryFetcher(BaseFetcher):
             log("[wiktionary] h1/h2 parent not found")
             return None
 
-        # оборачиваем в фиктивный объект с children для совместимости
+        # Return this node for compatibility with downstream section traversal
         return h_tag
 
     def _parse_senses(self, lang_root) -> List[Sense]:
@@ -125,7 +125,7 @@ class WiktionaryFetcher(BaseFetcher):
         synonyms: List[str] = []
 
         def clean_txt(text: str) -> str:
-            txt = re.sub(r"\[\d+\]", "", text)  # убираем сноски вида [1]
+            txt = re.sub(r"\[\d+\]", "", text)  # remove reference markers like [1]
             return " ".join(txt.split())
 
         if not lang_root:
@@ -149,7 +149,7 @@ class WiktionaryFetcher(BaseFetcher):
                     for li in lst.find_all("li", recursive=False):
                         yield li
 
-        # собрать определения
+        # collect definitions
         for li in iter_section("Значение"):
             raw = clean_txt(li.get_text(" ", strip=True))
             if not raw:
@@ -159,12 +159,12 @@ class WiktionaryFetcher(BaseFetcher):
                 Sense(
                     definition=definition,
                     examples=examples,
-                    synonyms=[],  # заполнится позже общим списком
+                    synonyms=[],  # will be filled later with a shared synonym list
                     pos=None,
                 )
             )
 
-        # собрать синонимы (общие для всех sense)
+        # collect synonyms (shared across all senses)
         for li in iter_section("Синонимы"):
             for a in li.find_all("a"):
                 txt = clean_txt(a.get_text(" ", strip=True))
@@ -201,7 +201,7 @@ class WiktionaryFetcher(BaseFetcher):
         return None
 
     def _extract_syllables(self, lang_root) -> Optional[str]:
-        """Extract syllabified/stressed headword like 'о́·мут'."""
+        """Extract syllabified/stressed headword (Russian)."""
         if not lang_root:
             return None
         # Prefer explicit hyphenation marker
@@ -227,7 +227,7 @@ class WiktionaryFetcher(BaseFetcher):
                 # avoid very long strings
                 if len(text) <= 40 and "{" not in text and "}" not in text:
                     return text
-        # Fallback: parse template data-mw that contains {{по-слогам|...}}
+        # Fallback: parse template data-mw containing the hyphenation template
         for tag in lang_root.find_all(attrs={"data-mw": True}):
             data = tag.get("data-mw") or ""
             if "по-слогам" not in data:
@@ -241,7 +241,7 @@ class WiktionaryFetcher(BaseFetcher):
         return None
 
     def _split_examples(self, raw: str):
-        """Викисловарь пишет примеры после символа ◆"""
+        """Wiktionary puts examples after the ◆ marker."""
         if "◆" in raw:
             parts = [p.strip(" —:;") for p in raw.split("◆") if p.strip(" —:;")]
             definition = parts[0] if parts else raw

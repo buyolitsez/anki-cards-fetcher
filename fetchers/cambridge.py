@@ -37,11 +37,11 @@ class CambridgeFetcher(BaseFetcher):
             raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
 
         senses = self._parse_page(self.BASE, word)
-        # fallback: AMP-версия иногда содержит явные ссылки на медиа
+        # Fallback: AMP version may contain explicit media links
         if senses and all(not s.audio_urls for s in senses):
             amp_senses = self._parse_page(self.AMP_BASE, word)
             if amp_senses:
-                # переносим audio/picture, если есть
+                # Copy audio/picture from AMP data when available
                 for i, s in enumerate(senses):
                     if i < len(amp_senses):
                         if amp_senses[i].audio_urls:
@@ -49,9 +49,9 @@ class CambridgeFetcher(BaseFetcher):
                         if amp_senses[i].picture_url:
                             s.picture_url = amp_senses[i].picture_url
                             s.picture_referer = amp_senses[i].picture_referer or "https://dictionary.cambridge.org/"
-        # если аудио нигде не нашли — глобальный поиск по странице (кнопки произношения)
+        # If audio is still missing, do a page-wide fallback search (pronunciation buttons)
         if senses and all(not s.audio_urls for s in senses):
-            soup = self._last_soup  # заполнен в _parse_page
+            soup = self._last_soup  # populated in _parse_page
             if soup:
                 global_audio = self._parse_audio(soup)
                 if global_audio:
@@ -170,7 +170,7 @@ class CambridgeFetcher(BaseFetcher):
 
     def _parse_audio(self, entry) -> Dict[str, str]:
         audio: Dict[str, str] = {}
-        # Cambridge меняет вёрстку; соберём ссылки из нескольких вариантов.
+        # Cambridge layout changes often; collect links from multiple patterns.
         candidates = []
         candidates.extend(entry.select("[data-src-mp3], [data-src-ogg]"))
         candidates.extend(entry.select("source[src], audio[src], audio source[src]"))
@@ -178,7 +178,7 @@ class CambridgeFetcher(BaseFetcher):
         candidates.extend(entry.select("button[data-src-mp3], button[data-src-ogg]"))
         candidates.extend(entry.select("span[data-src-mp3], span[data-src-ogg]"))
 
-        # AMP-страницы используют <amp-audio><source src=...>
+        # AMP pages use <amp-audio><source src=...>
         candidates.extend(entry.select("amp-audio source[src]"))
 
         for tag in candidates:
@@ -197,12 +197,12 @@ class CambridgeFetcher(BaseFetcher):
             if not plausible:
                 continue
             region_key = self._find_region(tag)
-            # сохраняем первый вариант для региона; если регион не найден — кладём как default
+            # Keep first candidate per region; use "default" when region is unknown
             key = region_key or "default"
             if key not in audio:
                 audio[key] = url
 
-        # fallback: первая попавшаяся data-src-mp3
+        # Fallback: first available data-src-mp3
         if not audio:
             src = entry.select_one("[data-src-mp3]")
             if src:
@@ -249,7 +249,7 @@ class CambridgeFetcher(BaseFetcher):
         return ipa
 
     def _find_region(self, tag) -> Optional[str]:
-        """Пытается вычислить регион (us/uk) исходя из ближайших .region или классов."""
+        """Try to detect region (us/uk) from nearby .region nodes or classes."""
         parent = tag
         for _ in range(5):
             region_el = parent.select_one(".region, .dregion") if hasattr(parent, "select_one") else None
@@ -270,12 +270,12 @@ class CambridgeFetcher(BaseFetcher):
         return None
 
     def _parse_picture(self, entry) -> Optional[str]:
-        # Cambridge иногда хранит картинки в img[data-src] или img[src] с путём /media/
+        # Cambridge may keep images in img[data-src] or img[src] with /media/ paths
         for img in entry.select("img, source, picture source"):
             src = img.get("data-src") or img.get("srcset") or img.get("src")
             if not src:
                 continue
-            # srcset может содержать несколько ссылок через запятую — берём первую
+            # srcset may contain multiple comma-separated links; use the first one
             src = src.split(",")[0].split()[0]
             if any(ext in src.lower() for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp")) and "/media/" in src:
                 return src

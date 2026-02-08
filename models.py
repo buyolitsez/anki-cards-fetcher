@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 @dataclass
 class Sense:
-    """Унифицированная структура значения словаря."""
+    """Unified dictionary sense structure."""
 
     definition: str
     examples: List[str] = field(default_factory=list)
