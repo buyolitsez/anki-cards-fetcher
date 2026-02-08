@@ -20,6 +20,9 @@ from ..models import Sense
 from .base import BaseFetcher
 
 LOG_PATH = Path(__file__).resolve().parent.parent / "fetch_log.txt"
+_LETTER_RE = re.compile(r"[A-Za-zА-Яа-яЁё]")
+_REF_MARKER_RE = re.compile(r"\[\s*[^A-Za-zА-Яа-яЁё\]]*\d+[^A-Za-zА-Яа-яЁё\]]*\]")
+_ORPHAN_BRACKET_RE = re.compile(r"(^|(?<=\s))[\[\]](?=\s|$)")
 
 
 def log(line: str):
@@ -125,8 +128,22 @@ class WiktionaryFetcher(BaseFetcher):
         synonyms: List[str] = []
 
         def clean_txt(text: str) -> str:
-            txt = re.sub(r"\[\d+\]", "", text)  # remove reference markers like [1]
-            return " ".join(txt.split())
+            txt = (text or "").replace("\u00a0", " ")
+            # Drop reference markers like [1], [≈ 1], [◆ 1], etc.
+            txt = _REF_MARKER_RE.sub("", txt)
+            # Remove isolated orphan brackets that can remain after marker cleanup.
+            txt = _ORPHAN_BRACKET_RE.sub(" ", txt)
+            txt = " ".join(txt.split())
+            txt = re.sub(r"\s+([,.;:!?])", r"\1", txt)
+            return txt
+
+        def is_meaningful_token(text: str) -> bool:
+            txt = (text or "").strip()
+            if not txt:
+                return False
+            if txt in {"?", "-", "—"}:
+                return False
+            return bool(_LETTER_RE.search(txt))
 
         if not lang_root:
             return []
@@ -166,9 +183,14 @@ class WiktionaryFetcher(BaseFetcher):
 
         # collect synonyms (shared across all senses)
         for li in iter_section("Синонимы"):
-            for a in li.find_all("a"):
+            # In many ru.wiktionary entries synonyms are rendered as reference blocks:
+            # [↑] backlink + .mw-reference-text payload. Prefer payload anchors.
+            anchors = li.select(".mw-reference-text a") or li.find_all("a")
+            for a in anchors:
+                if a.find_parent(class_="mw-cite-backlink"):
+                    continue
                 txt = clean_txt(a.get_text(" ", strip=True))
-                if txt and txt not in synonyms:
+                if is_meaningful_token(txt) and txt not in synonyms:
                     synonyms.append(txt)
 
         if synonyms:

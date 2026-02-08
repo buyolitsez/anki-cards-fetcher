@@ -62,3 +62,37 @@ def test_wiktionary_parse_senses_and_synonyms():
     assert senses[0].examples == ["пример"]
     assert "пример" in senses[0].synonyms
     assert "тест" in senses[0].synonyms
+
+
+def test_wiktionary_ignores_semantic_ref_markers_and_backlinks():
+    html = """
+    <section aria-labelledby="Русский">
+      <section aria-labelledby="Значение">
+        <ol>
+          <li>
+            устар., также церк. пещера [ ≈ 1 ] [ ≠ 1 ] [ ▲ 1 ] [ ▼ 1 ] [ ‿ 1 ] [ ◇ 1 ] [ ◆ 1 ]
+            ◆ пример 1
+            ◆ пример 2
+          </li>
+        </ol>
+      </section>
+      <section aria-labelledby="Синонимы">
+        <ol class="mw-references references">
+          <li id="cite_note-1">
+            <span class="mw-cite-backlink"><a href="#cite_ref-1">↑</a></span>
+            <span class="mw-reference-text reference-text">
+              <a href="#">пещера</a>, <a href="#">притон</a>, <a href="#">гнездилище</a>
+            </span>
+          </li>
+        </ol>
+      </section>
+    </section>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    lang = soup.select_one("section")
+    fetcher = _make_fetcher()
+    senses = fetcher._parse_senses(lang)
+    assert len(senses) == 1
+    assert senses[0].definition == "устар., также церк. пещера"
+    assert senses[0].examples == ["пример 1", "пример 2"]
+    assert senses[0].synonyms == ["пещера", "притон", "гнездилище"]

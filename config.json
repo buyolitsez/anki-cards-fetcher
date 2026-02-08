@@ -1,6 +1,6 @@
 {
-  "note_type": "Basic",
-  "deck": "english",
+  "note_type": "мои слова",
+  "deck": "русский",
   "remember_last": true,
   "field_map": {
     "word": [
@@ -46,7 +46,7 @@
   ],
   "max_examples": 3,
   "max_synonyms": 4,
-  "source": "wiktionary_en",
+  "source": "wiktionary",
   "image_search": {
     "provider": "duckduckgo",
     "max_results": 6,
