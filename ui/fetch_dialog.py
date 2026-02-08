@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 import traceback
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from aqt import dialogs, mw
 from aqt.qt import (
@@ -163,6 +163,7 @@ class FetchDialog(QDialog):
         super().__init__(parent)
         self.cfg = get_config()
         self.senses: List[Sense] = []
+        self._typo_cache: Dict[Tuple[str, str, int], List[str]] = {}
         self.setWindowTitle("Cambridge / Wiktionary Fetch")
 
         # widgets
@@ -339,35 +340,89 @@ class FetchDialog(QDialog):
         except Exception:
             max_results = 12
         max_results = max(1, min(max_results, 40))
-        suggestions = self._collect_typo_suggestions(word, fetcher, max_results)
+        source_id = self.source_combo.currentData() or "cambridge"
+        cfg_snapshot = get_config()
+        suggestions = self._collect_typo_suggestions(word, source_id, cfg_snapshot, max_results)
         if not suggestions:
             return False
-        selected = self._pick_suggestion(word, suggestions, max_results)
+        selected = self._pick_suggestion(word, suggestions, max_results, source_id, cfg_snapshot)
         if not selected:
             return True
         self.word_edit.setText(selected)
         self.on_fetch()
         return True
 
-    def _collect_typo_suggestions(self, word: str, fetcher, max_results: int) -> List[str]:
-        candidates: List[str] = []
-        query_count = max(max_results * 3, 18)
-        fetch_limit = max(max_results * 6, 24)
-        for query in fallback_queries(word, max_queries=query_count):
-            try:
-                suggested = fetcher.suggest(query, limit=fetch_limit)
-            except Exception:
-                traceback.print_exc()
-                suggested = []
-            if query.casefold() != word.casefold():
-                candidates.append(query)
-            candidates.extend([s for s in suggested if isinstance(s, str)])
-        ranked_limit = max(max_results * 6, 30)
-        return rank_suggestions(word, candidates, ranked_limit)
+    def _collect_typo_suggestions(self, word: str, source_id: str, cfg_snapshot, max_results: int) -> List[str]:
+        cache_key = (source_id, word.casefold(), max_results)
+        cached = self._typo_cache.get(cache_key)
+        if cached is not None:
+            return cached[:]
 
-    def _pick_suggestion(self, word: str, suggestions: List[str], max_results: int) -> Optional[str]:
-        source_id = self.source_combo.currentData() or "cambridge"
-        cfg_snapshot = get_config()
+        candidates: List[str] = []
+        seen_candidates: set[str] = set()
+
+        def add_candidate(candidate: str):
+            item = (candidate or "").strip()
+            if not item:
+                return
+            key = item.casefold()
+            if key in seen_candidates:
+                return
+            seen_candidates.add(key)
+            candidates.append(item)
+
+        query_count = max(8, min(max_results + 6, 18))
+        fetch_limit = max(8, min(max_results * 2, 20))
+        target_candidates = max(max_results * 3, 16)
+        queries = fallback_queries(word, max_queries=query_count)
+        for query in queries:
+            if query.casefold() != word.casefold():
+                add_candidate(query)
+
+        max_workers = min(6, max(1, len(queries)))
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="typo-suggest") as pool:
+            future_to_query: Dict[Future, str] = {}
+            for query in queries:
+                future = pool.submit(self._suggest_for_query, source_id, cfg_snapshot, query, fetch_limit)
+                future_to_query[future] = query
+            for future in as_completed(future_to_query):
+                try:
+                    suggested = future.result()
+                except Exception:
+                    traceback.print_exc()
+                    suggested = []
+                for item in suggested:
+                    if isinstance(item, str):
+                        add_candidate(item)
+                if len(candidates) >= target_candidates:
+                    for pending in future_to_query:
+                        if not pending.done():
+                            pending.cancel()
+                    break
+
+        ranked_limit = max(max_results * 4, max_results + 12)
+        ranked = rank_suggestions(word, candidates, ranked_limit)
+        self._typo_cache[cache_key] = ranked
+        if len(self._typo_cache) > 80:
+            try:
+                oldest = next(iter(self._typo_cache))
+                del self._typo_cache[oldest]
+            except Exception:
+                self._typo_cache.clear()
+        return ranked[:]
+
+    def _suggest_for_query(self, source_id: str, cfg_snapshot, query: str, fetch_limit: int) -> List[str]:
+        fetcher = get_fetcher_by_id(source_id, cfg_snapshot)
+        return fetcher.suggest(query, limit=fetch_limit)
+
+    def _pick_suggestion(
+        self,
+        word: str,
+        suggestions: List[str],
+        max_results: int,
+        source_id: str,
+        cfg_snapshot,
+    ) -> Optional[str]:
 
         def validate(candidate: str) -> bool:
             checker = get_fetcher_by_id(source_id, cfg_snapshot)
