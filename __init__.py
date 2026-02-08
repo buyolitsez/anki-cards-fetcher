@@ -15,17 +15,19 @@ from aqt import dialogs, gui_hooks, mw
 from aqt.qt import QAction, QKeySequence
 
 from .config import ADDON_NAME, DEFAULT_CONFIG
-from .ui.fetch_dialog import FetchDialog
-from .ui.settings_dialog import SettingsDialog
 
 
 # ----------------------------- Menu hooks -----------------------------------
 def open_dialog():
+    from .ui.fetch_dialog import FetchDialog
+
     dlg = FetchDialog(mw)
     dlg.exec()
 
 
 def open_settings_dialog():
+    from .ui.settings_dialog import SettingsDialog
+
     dlg = SettingsDialog(mw)
     dlg.exec()
 
