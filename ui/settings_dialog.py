@@ -18,6 +18,7 @@ from aqt.utils import tooltip
 from ..config import DEFAULT_CONFIG, get_config, save_config
 from ..fetchers import get_fetchers
 from ..image_search import DEFAULT_IMAGE_PROVIDER, get_image_provider_choices
+from .source_utils import configured_source_ids, ensure_source_selection
 
 
 class SettingsDialog(QDialog):
@@ -51,18 +52,12 @@ class SettingsDialog(QDialog):
 
         # default sources
         self.source_checks = {}
-        cfg_sources = self.cfg.get("sources") if isinstance(self.cfg.get("sources"), list) else []
-        selected_sources = {str(source_id).strip() for source_id in cfg_sources if source_id}
-        if not selected_sources:
-            default_sources = DEFAULT_CONFIG.get("sources") or []
-            selected_sources.add(str(default_sources[0] if default_sources else "cambridge"))
+        selected_sources = configured_source_ids(self.cfg)
         for fetcher in get_fetchers(self.cfg):
             chk = QCheckBox(fetcher.LABEL)
             chk.setChecked(fetcher.ID in selected_sources)
             self.source_checks[fetcher.ID] = chk
-        if self.source_checks and not any(chk.isChecked() for chk in self.source_checks.values()):
-            first_chk = next(iter(self.source_checks.values()))
-            first_chk.setChecked(True)
+        ensure_source_selection(self.source_checks)
 
         # remember last
         self.remember_chk = QCheckBox("Remember last selections in dialog")
@@ -222,16 +217,7 @@ class SettingsDialog(QDialog):
     def on_save(self):
         note_type = self.ntype_combo.currentData() or None
         deck = self.deck_combo.currentData() or None
-        sources = [source_id for source_id, chk in self.source_checks.items() if chk.isChecked()]
-        if not sources:
-            default_sources = DEFAULT_CONFIG.get("sources") or []
-            default_source = str(default_sources[0] if default_sources else "cambridge")
-            if default_source in self.source_checks:
-                sources = [default_source]
-            elif self.source_checks:
-                sources = [next(iter(self.source_checks.keys()))]
-            else:
-                sources = [default_source]
+        sources = ensure_source_selection(self.source_checks)
         dialect_priority = ["uk", "us"] if self.uk_first.isChecked() else ["us", "uk"]
         image_search = {
             "provider": self.image_provider.currentData() or DEFAULT_IMAGE_PROVIDER,

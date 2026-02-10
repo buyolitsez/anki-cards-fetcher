@@ -82,6 +82,43 @@ def _read_config_json() -> Dict:
         return {}
 
 
+def _deep_copy_defaults() -> Dict:
+    return json.loads(json.dumps(DEFAULT_CONFIG))
+
+
+def _normalize_wiktionary_section(raw_section) -> Dict:
+    wiki_default = DEFAULT_CONFIG.get("wiktionary", {})
+    stored_wiki = raw_section if isinstance(raw_section, dict) else {}
+    merged = {**wiki_default, **stored_wiki}
+    merged["field_map"] = normalize_field_map(
+        {
+            **(wiki_default.get("field_map", {}) if isinstance(wiki_default, dict) else {}),
+            **(stored_wiki.get("field_map") or {}),
+        }
+    )
+    return merged
+
+
+def _normalized_config(raw_cfg: Dict) -> Dict:
+    raw = raw_cfg if isinstance(raw_cfg, dict) else {}
+    merged = _deep_copy_defaults()
+    merged.update(raw)
+    merged["sources"] = normalize_sources(raw.get("sources"), fallback_source=raw.get("source"))
+    merged.pop("source", None)
+    merged["field_map"] = normalize_field_map(
+        {**DEFAULT_CONFIG.get("field_map", {}), **(merged.get("field_map") or {})}
+    )
+    merged["wiktionary"] = _normalize_wiktionary_section(merged.get("wiktionary"))
+    merged["image_search"] = normalize_image_search(merged.get("image_search"))
+    merged["typo_suggestions"] = normalize_typo_suggestions(merged.get("typo_suggestions"))
+    return merged
+
+
+def _write_json(path: Path, payload: Dict):
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
 def get_config() -> Dict:
     stored: Dict = {}
     try:
@@ -92,50 +129,13 @@ def get_config() -> Dict:
         stored = _read_meta_config()
     if not stored:
         stored = _read_config_json()
-
-    merged = json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy defaults
-    for k, v in stored.items():
-        merged[k] = v
-    merged["sources"] = normalize_sources(stored.get("sources"), fallback_source=stored.get("source"))
-    merged.pop("source", None)
-    # ensure nested dict keeps defaults too
-    merged["field_map"] = normalize_field_map(
-        {**DEFAULT_CONFIG.get("field_map", {}), **(stored.get("field_map") or {})}
-    )
-    # merge wiktionary subsection
-    wiki_default = DEFAULT_CONFIG.get("wiktionary", {})
-    stored_wiki = stored.get("wiktionary") if isinstance(stored.get("wiktionary"), dict) else {}
-    merged["wiktionary"] = {**wiki_default, **(stored_wiki or {})}
-    merged["wiktionary"]["field_map"] = normalize_field_map(
-        {
-            **(wiki_default.get("field_map", {}) if isinstance(wiki_default, dict) else {}),
-            **(stored_wiki.get("field_map") or {}),
-        }
-    )
-    merged["image_search"] = normalize_image_search(stored.get("image_search"))
-    merged["typo_suggestions"] = normalize_typo_suggestions(stored.get("typo_suggestions"))
-    return merged
+    return _normalized_config(stored)
 
 
 def save_config(updates: Dict):
     cfg = get_config()
     cfg.update(updates)
-    cfg["sources"] = normalize_sources(cfg.get("sources"))
-    cfg.pop("source", None)
-    cfg["field_map"] = normalize_field_map(
-        {**DEFAULT_CONFIG.get("field_map", {}), **(cfg.get("field_map") or {})}
-    )
-    wiki_default = DEFAULT_CONFIG.get("wiktionary", {})
-    stored_wiki = cfg.get("wiktionary") if isinstance(cfg.get("wiktionary"), dict) else {}
-    cfg["wiktionary"] = {**wiki_default, **(stored_wiki or {})}
-    cfg["wiktionary"]["field_map"] = normalize_field_map(
-        {
-            **(wiki_default.get("field_map", {}) if isinstance(wiki_default, dict) else {}),
-            **(stored_wiki.get("field_map") or {}),
-        }
-    )
-    cfg["image_search"] = normalize_image_search(cfg.get("image_search"))
-    cfg["typo_suggestions"] = normalize_typo_suggestions(cfg.get("typo_suggestions"))
+    cfg = _normalized_config(cfg)
     try:
         mw.addonManager.writeConfig(ADDON_NAME, cfg)
     except Exception:
@@ -149,14 +149,12 @@ def save_config(updates: Dict):
                 if not isinstance(meta, dict):
                     meta = {}
         meta["config"] = cfg
-        with META_PATH.open("w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
+        _write_json(META_PATH, meta)
     except Exception:
         traceback.print_exc()
     # plain config.json as fallback
     try:
-        with CONFIG_PATH.open("w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        _write_json(CONFIG_PATH, cfg)
     except Exception:
         traceback.print_exc()
 

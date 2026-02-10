@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import quote, unquote
 
@@ -18,8 +17,7 @@ except Exception:  # pragma: no cover
 from ..media import USER_AGENT
 from ..models import Sense
 from .base import BaseFetcher
-
-LOG_PATH = Path(__file__).resolve().parent.parent / "fetch_log.txt"
+from .wiktionary_common import log_fetch, suggest_via_opensearch
 
 HEADING_TAGS = ("h2", "h3", "h4", "h5", "h6")
 POS_TITLES = {
@@ -54,14 +52,6 @@ POS_TITLES = {
 }
 
 
-def log(line: str):
-    try:
-        with LOG_PATH.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
-
-
 class EnglishWiktionaryFetcher(BaseFetcher):
     ID = "wiktionary_en"
     LABEL = "en.wiktionary.org (en)"
@@ -75,22 +65,22 @@ class EnglishWiktionaryFetcher(BaseFetcher):
             raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
 
         url = self.BASE.format(word=quote(word.strip()))
-        log(f"[wiktionary-en] fetch '{word}' -> {url}")
+        log_fetch(f"[wiktionary-en] fetch '{word}' -> {url}")
         try:
             resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
-            log(f"[wiktionary-en] status {resp.status_code}, len={len(resp.text)}")
+            log_fetch(f"[wiktionary-en] status {resp.status_code}, len={len(resp.text)}")
         except Exception as e:
-            log(f"[wiktionary-en] request failed: {e}")
+            log_fetch(f"[wiktionary-en] request failed: {e}")
             raise RuntimeError(f"Wiktionary request failed: {e}")
         if resp.status_code == 404:
-            log(f"[wiktionary-en] 404 for '{word}'")
+            log_fetch(f"[wiktionary-en] 404 for '{word}'")
             return []
         if resp.status_code >= 400:
             raise RuntimeError(f"Wiktionary returned {resp.status_code} for '{word}'.")
 
         soup = BeautifulSoup(resp.text, "html.parser")
         lang_root = self._language_headline(soup, "English")
-        log(f"[wiktionary-en] lang_root found: {bool(lang_root)}")
+        log_fetch(f"[wiktionary-en] lang_root found: {bool(lang_root)}")
         if not lang_root:
             return []
 
@@ -102,56 +92,18 @@ class EnglishWiktionaryFetcher(BaseFetcher):
                     s.picture_url = picture
                 if not s.picture_referer:
                     s.picture_referer = "https://en.wiktionary.org/"
-        log(f"[wiktionary-en] senses found: {len(senses)}, picture: {bool(picture)}")
+        log_fetch(f"[wiktionary-en] senses found: {len(senses)}, picture: {bool(picture)}")
         return senses
 
     def suggest(self, word: str, limit: int = 8) -> List[str]:
-        if not requests:
-            return []
-        query = word.strip()
-        if not query:
-            return []
-        safe_limit = max(1, min(int(limit), 20))
-        try:
-            resp = requests.get(
-                self.API_BASE,
-                headers={"User-Agent": USER_AGENT},
-                params={
-                    "action": "opensearch",
-                    "search": query,
-                    "limit": safe_limit,
-                    "namespace": 0,
-                    "format": "json",
-                },
-                timeout=15,
-            )
-        except Exception as e:
-            log(f"[wiktionary-en] suggest failed: {e}")
-            return []
-        if resp.status_code >= 400:
-            return []
-        try:
-            payload = resp.json()
-        except Exception:
-            return []
-        if not isinstance(payload, list) or len(payload) < 2 or not isinstance(payload[1], list):
-            return []
-        out: List[str] = []
-        seen: set[str] = set()
-        for item in payload[1]:
-            if not isinstance(item, str):
-                continue
-            candidate = item.strip()
-            if not candidate:
-                continue
-            key = candidate.casefold()
-            if key == query.casefold() or key in seen:
-                continue
-            seen.add(key)
-            out.append(candidate)
-            if len(out) >= safe_limit:
-                break
-        return out
+        return suggest_via_opensearch(
+            requests_mod=requests,
+            api_base=self.API_BASE,
+            query=word,
+            limit=limit,
+            user_agent=USER_AGENT,
+            log_tag="wiktionary-en",
+        )
 
     # ----------------------- helpers -----------------------
     def _language_headline(self, soup, language: str):

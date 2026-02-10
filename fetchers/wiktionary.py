@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 from urllib.parse import quote
-from pathlib import Path
 
 try:
     import requests
@@ -18,19 +17,10 @@ except Exception:
 from ..media import USER_AGENT
 from ..models import Sense
 from .base import BaseFetcher
-
-LOG_PATH = Path(__file__).resolve().parent.parent / "fetch_log.txt"
+from .wiktionary_common import log_fetch, suggest_via_opensearch
 _LETTER_RE = re.compile(r"[A-Za-zА-Яа-яЁё]")
 _REF_MARKER_RE = re.compile(r"\[\s*[^A-Za-zА-Яа-яЁё\]]*\d+[^A-Za-zА-Яа-яЁё\]]*\]")
 _ORPHAN_BRACKET_RE = re.compile(r"(^|(?<=\s))[\[\]](?=\s|$)")
-
-
-def log(line: str):
-    try:
-        with LOG_PATH.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
 
 
 class WiktionaryFetcher(BaseFetcher):
@@ -46,22 +36,22 @@ class WiktionaryFetcher(BaseFetcher):
             raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
 
         url = self.BASE.format(word=quote(word.strip()))
-        log(f"[wiktionary] fetch '{word}' -> {url}")
+        log_fetch(f"[wiktionary] fetch '{word}' -> {url}")
         try:
             resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
-            log(f"[wiktionary] status {resp.status_code}, len={len(resp.text)}")
+            log_fetch(f"[wiktionary] status {resp.status_code}, len={len(resp.text)}")
         except Exception as e:
-            log(f"[wiktionary] request failed: {e}")
+            log_fetch(f"[wiktionary] request failed: {e}")
             raise RuntimeError(f"Wiktionary request failed: {e}")
         if resp.status_code == 404:
-            log(f"[wiktionary] 404 for '{word}'")
+            log_fetch(f"[wiktionary] 404 for '{word}'")
             return []
         if resp.status_code >= 400:
             raise RuntimeError(f"Wiktionary returned {resp.status_code} for '{word}'.")
 
         soup = BeautifulSoup(resp.text, "html.parser")
         lang_section = self._language_section(soup, "Русский")
-        log(f"[wiktionary] lang_section nodes: {len(lang_section) if lang_section else 0}")
+        log_fetch(f"[wiktionary] lang_section nodes: {len(lang_section) if lang_section else 0}")
         if not lang_section:
             return []
 
@@ -78,56 +68,18 @@ class WiktionaryFetcher(BaseFetcher):
             for s in senses:
                 if not s.syllables:
                     s.syllables = syllables
-        log(f"[wiktionary] senses found: {len(senses)}, picture: {bool(picture)}")
+        log_fetch(f"[wiktionary] senses found: {len(senses)}, picture: {bool(picture)}")
         return senses
 
     def suggest(self, word: str, limit: int = 8) -> List[str]:
-        if not requests:
-            return []
-        query = word.strip()
-        if not query:
-            return []
-        safe_limit = max(1, min(int(limit), 20))
-        try:
-            resp = requests.get(
-                self.API_BASE,
-                headers={"User-Agent": USER_AGENT},
-                params={
-                    "action": "opensearch",
-                    "search": query,
-                    "limit": safe_limit,
-                    "namespace": 0,
-                    "format": "json",
-                },
-                timeout=15,
-            )
-        except Exception as e:
-            log(f"[wiktionary] suggest failed: {e}")
-            return []
-        if resp.status_code >= 400:
-            return []
-        try:
-            payload = resp.json()
-        except Exception:
-            return []
-        if not isinstance(payload, list) or len(payload) < 2 or not isinstance(payload[1], list):
-            return []
-        out: List[str] = []
-        seen: set[str] = set()
-        for item in payload[1]:
-            if not isinstance(item, str):
-                continue
-            candidate = item.strip()
-            if not candidate:
-                continue
-            key = candidate.casefold()
-            if key == query.casefold() or key in seen:
-                continue
-            seen.add(key)
-            out.append(candidate)
-            if len(out) >= safe_limit:
-                break
-        return out
+        return suggest_via_opensearch(
+            requests_mod=requests,
+            api_base=self.API_BASE,
+            query=word,
+            limit=limit,
+            user_agent=USER_AGENT,
+            log_tag="wiktionary",
+        )
 
     # ----------------------- helpers -----------------------
     def _language_section(self, soup, language: str):
@@ -161,12 +113,12 @@ class WiktionaryFetcher(BaseFetcher):
                         break
         if not headline:
             heads = [f"{(span.get('id') or '').strip()}|{(span.get_text(strip=True) or '')}" for span in soup.select('.mw-headline')][:10]
-            log("[wiktionary] headline not found; sample headlines: " + " || ".join(heads))
+            log_fetch("[wiktionary] headline not found; sample headlines: " + " || ".join(heads))
             return None
 
         h_tag = headline if headline.name in ("h1", "h2") else headline.find_parent(["h1", "h2"])
         if not h_tag:
-            log("[wiktionary] h1/h2 parent not found")
+            log_fetch("[wiktionary] h1/h2 parent not found")
             return None
 
         # Return this node for compatibility with downstream section traversal
@@ -248,7 +200,7 @@ class WiktionaryFetcher(BaseFetcher):
         if synonyms:
             for s in senses:
                 s.synonyms = synonyms[:]
-        log(f"[wiktionary] senses parsed: {len(senses)}, synonyms: {len(synonyms)}")
+        log_fetch(f"[wiktionary] senses parsed: {len(senses)}, synonyms: {len(synonyms)}")
         return senses
 
     def _definition_text_from_li(self, li) -> str:

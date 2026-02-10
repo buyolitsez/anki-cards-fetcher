@@ -22,12 +22,13 @@ from aqt.qt import (
 )
 from aqt.utils import showInfo, showWarning, tooltip
 
-from ..config import DEFAULT_CONFIG, get_config, save_config
+from ..config import get_config, save_config
 from ..fetchers import get_fetcher_by_id, get_fetchers
 from ..media import download_to_media
 from ..models import Sense
 from ..typo import fallback_queries, rank_suggestions
 from .image_search_dialog import ImageSearchDialog
+from .source_utils import configured_source_ids, ensure_source_selection
 
 
 class SuggestionPickerDialog(QDialog):
@@ -247,11 +248,7 @@ class FetchDialog(QDialog):
         self.source_checks.clear()
         self.source_labels.clear()
         fetchers = get_fetchers(self.cfg)
-        cfg_sources = self.cfg.get("sources") if isinstance(self.cfg.get("sources"), list) else []
-        selected_sources = {str(source_id).strip() for source_id in cfg_sources if source_id}
-        if not selected_sources:
-            default_sources = DEFAULT_CONFIG.get("sources") or []
-            selected_sources.add(str(default_sources[0] if default_sources else "cambridge"))
+        selected_sources = configured_source_ids(self.cfg)
         for fetcher in fetchers:
             chk = QCheckBox(fetcher.LABEL)
             chk.setChecked(fetcher.ID in selected_sources)
@@ -259,9 +256,7 @@ class FetchDialog(QDialog):
             self.source_checks[fetcher.ID] = chk
             self.source_labels[fetcher.ID] = fetcher.LABEL
             self.source_row.addWidget(chk)
-        if self.source_checks and not any(chk.isChecked() for chk in self.source_checks.values()):
-            first_chk = next(iter(self.source_checks.values()))
-            first_chk.setChecked(True)
+        ensure_source_selection(self.source_checks)
         self.source_row.addStretch(1)
 
         # note types
@@ -310,14 +305,7 @@ class FetchDialog(QDialog):
         )
 
     def _selected_source_ids(self) -> List[str]:
-        selected = [source_id for source_id, chk in self.source_checks.items() if chk.isChecked()]
-        if selected:
-            return selected
-        if self.source_checks:
-            first_id, first_chk = next(iter(self.source_checks.items()))
-            first_chk.setChecked(True)
-            return [first_id]
-        return ["cambridge"]
+        return ensure_source_selection(self.source_checks)
 
     def _source_label(self, source_id: str) -> str:
         return self.source_labels.get(source_id, source_id)
@@ -545,11 +533,7 @@ class FetchDialog(QDialog):
             sense = self.senses[row]
             sense.picture_url = dlg.selected.image_url
             sense.picture_referer = dlg.selected.source_url
-            item = self.sense_list.item(row)
-            if item:
-                source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
-                item.setText(self._sense_item_text(sense, source_id))
-            self.on_select(row)
+            self._refresh_sense_item(row)
 
     def on_clear_image(self):
         row = self.sense_list.currentRow()
@@ -559,11 +543,7 @@ class FetchDialog(QDialog):
         sense = self.senses[row]
         sense.picture_url = None
         sense.picture_referer = None
-        item = self.sense_list.item(row)
-        if item:
-            source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
-            item.setText(self._sense_item_text(sense, source_id))
-        self.on_select(row)
+        self._refresh_sense_item(row)
 
     def on_insert(self, open_editor: bool = False):
         row = self.sense_list.currentRow()
@@ -671,24 +651,27 @@ class FetchDialog(QDialog):
         self.accept()
 
     def _choose_audio(self, audio_map: Dict[str, str]) -> Optional[str]:
-        for pref in self.cfg.get("dialect_priority", []):
-            if pref in audio_map:
-                return audio_map[pref]
-        if "default" in audio_map:
-            return audio_map["default"]
-        if audio_map:
-            return next(iter(audio_map.values()))
-        return None
+        return self._choose_by_dialect(audio_map)
 
     def _choose_ipa(self, ipa_map: Dict[str, str]) -> Optional[str]:
+        return self._choose_by_dialect(ipa_map)
+
+    def _choose_by_dialect(self, values: Dict[str, str]) -> Optional[str]:
         for pref in self.cfg.get("dialect_priority", []):
-            if pref in ipa_map:
-                return ipa_map[pref]
-        if "default" in ipa_map:
-            return ipa_map["default"]
-        if ipa_map:
-            return next(iter(ipa_map.values()))
+            if pref in values:
+                return values[pref]
+        if "default" in values:
+            return values["default"]
+        if values:
+            return next(iter(values.values()))
         return None
+
+    def _refresh_sense_item(self, row: int):
+        item = self.sense_list.item(row)
+        if item and 0 <= row < len(self.senses):
+            source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
+            item.setText(self._sense_item_text(self.senses[row], source_id))
+        self.on_select(row)
 
     def _open_browser(self, nid: int):
         try:
