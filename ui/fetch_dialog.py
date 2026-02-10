@@ -6,6 +6,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from aqt import dialogs, mw
 from aqt.qt import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QHBoxLayout,
@@ -21,7 +22,7 @@ from aqt.qt import (
 )
 from aqt.utils import showInfo, showWarning, tooltip
 
-from ..config import get_config, save_config
+from ..config import DEFAULT_CONFIG, get_config, save_config
 from ..fetchers import get_fetcher_by_id, get_fetchers
 from ..media import download_to_media
 from ..models import Sense
@@ -163,7 +164,10 @@ class FetchDialog(QDialog):
         super().__init__(parent)
         self.cfg = get_config()
         self.senses: List[Sense] = []
+        self.sense_sources: List[str] = []
         self._typo_cache: Dict[Tuple[str, str, int], List[str]] = {}
+        self.source_checks: Dict[str, QCheckBox] = {}
+        self.source_labels: Dict[str, str] = {}
         self.setWindowTitle("Cambridge / Wiktionary Fetch")
 
         # widgets
@@ -178,17 +182,15 @@ class FetchDialog(QDialog):
         self.image_btn = QPushButton("Find Image")
         self.clear_image_btn = QPushButton("Clear Image")
 
-        self.source_combo = QComboBox()
         self.ntype_combo = QComboBox()
         self.deck_combo = QComboBox()
+        self.source_row = QHBoxLayout()
 
         self._populate_models()
 
         top = QHBoxLayout()
         top.addWidget(QLabel("Word:"))
         top.addWidget(self.word_edit)
-        top.addWidget(QLabel("Source:"))
-        top.addWidget(self.source_combo)
         top.addWidget(self.fetch_btn)
 
         combos = QHBoxLayout()
@@ -209,6 +211,7 @@ class FetchDialog(QDialog):
 
         main = QVBoxLayout()
         main.addLayout(top)
+        main.addLayout(self.source_row)
         main.addLayout(combos)
         main.addLayout(body)
         main.addLayout(buttons)
@@ -224,7 +227,6 @@ class FetchDialog(QDialog):
         self.clear_image_btn.clicked.connect(self.on_clear_image)
         self.ntype_combo.currentTextChanged.connect(self._remember_selection)
         self.deck_combo.currentTextChanged.connect(self._remember_selection)
-        self.source_combo.currentIndexChanged.connect(self._remember_selection)
 
     # ---------- UI helpers ----------
     def _populate_models(self):
@@ -236,15 +238,31 @@ class FetchDialog(QDialog):
         self.cfg = get_config()
         col = mw.col
         # sources
-        self.source_combo.clear()
+        while self.source_row.count():
+            item = self.source_row.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        self.source_row.addWidget(QLabel("Sources:"))
+        self.source_checks.clear()
+        self.source_labels.clear()
         fetchers = get_fetchers(self.cfg)
+        cfg_sources = self.cfg.get("sources") if isinstance(self.cfg.get("sources"), list) else []
+        selected_sources = {str(source_id).strip() for source_id in cfg_sources if source_id}
+        if not selected_sources:
+            default_sources = DEFAULT_CONFIG.get("sources") or []
+            selected_sources.add(str(default_sources[0] if default_sources else "cambridge"))
         for fetcher in fetchers:
-            self.source_combo.addItem(fetcher.LABEL, fetcher.ID)
-        cfg_source = (self.cfg.get("source") or "").strip()
-        idx = self.source_combo.findData(cfg_source)
-        if idx == -1:
-            idx = 0
-        self.source_combo.setCurrentIndex(idx)
+            chk = QCheckBox(fetcher.LABEL)
+            chk.setChecked(fetcher.ID in selected_sources)
+            chk.stateChanged.connect(self._remember_selection)
+            self.source_checks[fetcher.ID] = chk
+            self.source_labels[fetcher.ID] = fetcher.LABEL
+            self.source_row.addWidget(chk)
+        if self.source_checks and not any(chk.isChecked() for chk in self.source_checks.values()):
+            first_chk = next(iter(self.source_checks.values()))
+            first_chk.setChecked(True)
+        self.source_row.addStretch(1)
 
         # note types
         self.ntype_combo.clear()
@@ -282,19 +300,61 @@ class FetchDialog(QDialog):
     def _remember_selection(self, *_):
         if not self.cfg.get("remember_last", True):
             return
+        source_ids = self._selected_source_ids()
         save_config(
             {
                 "note_type": self.ntype_combo.currentText(),
                 "deck": self.deck_combo.currentText(),
-                "source": self.source_combo.currentData(),
+                "sources": source_ids,
             }
         )
 
-    def _current_fetcher(self):
-        source_id = self.source_combo.currentData() or "cambridge"
-        # Reload config before creating fetcher because settings may have changed
-        cfg = get_config()
-        return get_fetcher_by_id(source_id, cfg)
+    def _selected_source_ids(self) -> List[str]:
+        selected = [source_id for source_id, chk in self.source_checks.items() if chk.isChecked()]
+        if selected:
+            return selected
+        if self.source_checks:
+            first_id, first_chk = next(iter(self.source_checks.items()))
+            first_chk.setChecked(True)
+            return [first_id]
+        return ["cambridge"]
+
+    def _source_label(self, source_id: str) -> str:
+        return self.source_labels.get(source_id, source_id)
+
+    def _sense_item_text(self, sense: Sense, source_id: str) -> str:
+        preview = sense.preview_text(self.cfg["max_examples"], self.cfg["max_synonyms"])
+        return f"[{self._source_label(source_id)}] {preview}"
+
+    def _fetch_for_source(self, source_id: str, cfg_snapshot, word: str) -> List[Sense]:
+        fetcher = get_fetcher_by_id(source_id, cfg_snapshot)
+        return fetcher.fetch(word)
+
+    def _fetch_from_sources(self, source_ids: List[str], cfg_snapshot, word: str) -> Tuple[List[Sense], List[str], List[str]]:
+        source_to_senses: Dict[str, List[Sense]] = {}
+        errors: List[str] = []
+        max_workers = min(4, max(1, len(source_ids)))
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="multi-fetch") as pool:
+            future_to_source: Dict[Future, str] = {}
+            for source_id in source_ids:
+                future = pool.submit(self._fetch_for_source, source_id, cfg_snapshot, word)
+                future_to_source[future] = source_id
+            for future in as_completed(future_to_source):
+                source_id = future_to_source[future]
+                try:
+                    source_to_senses[source_id] = future.result() or []
+                except Exception as e:
+                    source_to_senses[source_id] = []
+                    errors.append(f"{self._source_label(source_id)}: {e}")
+                    traceback.print_exc()
+
+        merged_senses: List[Sense] = []
+        merged_sources: List[str] = []
+        for source_id in source_ids:
+            for sense in source_to_senses.get(source_id, []):
+                merged_senses.append(sense)
+                merged_sources.append(source_id)
+        return merged_senses, merged_sources, errors
 
     def _resolve_field_map(self, source_id: str) -> Dict[str, List[str]]:
         base_map = self.cfg.get("field_map", {})
@@ -312,26 +372,29 @@ class FetchDialog(QDialog):
         if not word:
             showWarning("Enter a word first.")
             return
-        fetcher = self._current_fetcher()
-        try:
-            senses = fetcher.fetch(word)
-        except Exception as e:
-            showWarning(f"Fetch error: {e}")
-            traceback.print_exc()
-            return
+        source_ids = self._selected_source_ids()
+        cfg_snapshot = get_config()
+        senses, sense_sources, errors = self._fetch_from_sources(source_ids, cfg_snapshot, word)
         if not senses:
-            if self._try_typo_suggestions(word, fetcher):
+            if self._try_typo_suggestions(word, source_ids):
                 return
-            showInfo("No definitions found.")
+            if errors:
+                showWarning("No definitions found.\n\n" + "\n".join(errors[:4]))
+            else:
+                showInfo("No definitions found.")
             return
+        if errors:
+            tooltip("Some sources failed:\n" + "\n".join(errors[:3]), parent=self)
         self.senses = senses
+        self.sense_sources = sense_sources
         self.sense_list.clear()
-        for sense in senses:
-            item = QListWidgetItem(sense.preview_text(self.cfg["max_examples"], self.cfg["max_synonyms"]))
+        for idx, sense in enumerate(senses):
+            source_id = sense_sources[idx] if idx < len(sense_sources) else source_ids[0]
+            item = QListWidgetItem(self._sense_item_text(sense, source_id))
             self.sense_list.addItem(item)
         self.sense_list.setCurrentRow(0)
 
-    def _try_typo_suggestions(self, word: str, fetcher) -> bool:
+    def _try_typo_suggestions(self, word: str, source_ids: List[str]) -> bool:
         typo_cfg = self.cfg.get("typo_suggestions") if isinstance(self.cfg.get("typo_suggestions"), dict) else {}
         if not typo_cfg or not bool(typo_cfg.get("enabled", True)):
             return False
@@ -340,20 +403,20 @@ class FetchDialog(QDialog):
         except Exception:
             max_results = 12
         max_results = max(1, min(max_results, 40))
-        source_id = self.source_combo.currentData() or "cambridge"
         cfg_snapshot = get_config()
-        suggestions = self._collect_typo_suggestions(word, source_id, cfg_snapshot, max_results)
+        suggestions = self._collect_typo_suggestions(word, source_ids, cfg_snapshot, max_results)
         if not suggestions:
             return False
-        selected = self._pick_suggestion(word, suggestions, max_results, source_id, cfg_snapshot)
+        selected = self._pick_suggestion(word, suggestions, max_results, source_ids, cfg_snapshot)
         if not selected:
             return True
         self.word_edit.setText(selected)
         self.on_fetch()
         return True
 
-    def _collect_typo_suggestions(self, word: str, source_id: str, cfg_snapshot, max_results: int) -> List[str]:
-        cache_key = (source_id, word.casefold(), max_results)
+    def _collect_typo_suggestions(self, word: str, source_ids: List[str], cfg_snapshot, max_results: int) -> List[str]:
+        source_key = ",".join(source_ids)
+        cache_key = (source_key, word.casefold(), max_results)
         cached = self._typo_cache.get(cache_key)
         if cached is not None:
             return cached[:]
@@ -379,13 +442,14 @@ class FetchDialog(QDialog):
             if query.casefold() != word.casefold():
                 add_candidate(query)
 
-        max_workers = min(6, max(1, len(queries)))
+        max_workers = min(8, max(1, len(queries) * len(source_ids)))
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="typo-suggest") as pool:
-            future_to_query: Dict[Future, str] = {}
-            for query in queries:
-                future = pool.submit(self._suggest_for_query, source_id, cfg_snapshot, query, fetch_limit)
-                future_to_query[future] = query
-            for future in as_completed(future_to_query):
+            future_to_source: Dict[Future, str] = {}
+            for source_id in source_ids:
+                for query in queries:
+                    future = pool.submit(self._suggest_for_query, source_id, cfg_snapshot, query, fetch_limit)
+                    future_to_source[future] = source_id
+            for future in as_completed(future_to_source):
                 try:
                     suggested = future.result()
                 except Exception:
@@ -395,7 +459,7 @@ class FetchDialog(QDialog):
                     if isinstance(item, str):
                         add_candidate(item)
                 if len(candidates) >= target_candidates:
-                    for pending in future_to_query:
+                    for pending in future_to_source:
                         if not pending.done():
                             pending.cancel()
                     break
@@ -420,13 +484,19 @@ class FetchDialog(QDialog):
         word: str,
         suggestions: List[str],
         max_results: int,
-        source_id: str,
+        source_ids: List[str],
         cfg_snapshot,
     ) -> Optional[str]:
 
         def validate(candidate: str) -> bool:
-            checker = get_fetcher_by_id(source_id, cfg_snapshot)
-            return bool(checker.fetch(candidate))
+            for source_id in source_ids:
+                try:
+                    checker = get_fetcher_by_id(source_id, cfg_snapshot)
+                    if checker.fetch(candidate):
+                        return True
+                except Exception:
+                    continue
+            return False
 
         dlg = SuggestionPickerDialog(
             self,
@@ -444,8 +514,10 @@ class FetchDialog(QDialog):
             self.preview.clear()
             return
         sense = self.senses[row]
+        source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
         ipa = self._choose_ipa(sense.ipa)
         text = [
+            f"Source: {self._source_label(source_id)}",
             f"Definition: {sense.definition}",
             f"Syllables: {sense.syllables or '-'}",
             f"Examples: {' | '.join(sense.examples[:self.cfg['max_examples']]) or '-'}",
@@ -475,7 +547,8 @@ class FetchDialog(QDialog):
             sense.picture_referer = dlg.selected.source_url
             item = self.sense_list.item(row)
             if item:
-                item.setText(sense.preview_text(self.cfg["max_examples"], self.cfg["max_synonyms"]))
+                source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
+                item.setText(self._sense_item_text(sense, source_id))
             self.on_select(row)
 
     def on_clear_image(self):
@@ -488,7 +561,8 @@ class FetchDialog(QDialog):
         sense.picture_referer = None
         item = self.sense_list.item(row)
         if item:
-            item.setText(sense.preview_text(self.cfg["max_examples"], self.cfg["max_synonyms"]))
+            source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
+            item.setText(self._sense_item_text(sense, source_id))
         self.on_select(row)
 
     def on_insert(self, open_editor: bool = False):
@@ -515,7 +589,7 @@ class FetchDialog(QDialog):
                 note = col.newNote(False)
             except TypeError:
                 note = col.newNote()
-        source_id = self.source_combo.currentData() or "cambridge"
+        source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
         fmap: Dict[str, List[str]] = self._resolve_field_map(source_id)
 
         def set_field(key: str, value: str):
@@ -588,7 +662,8 @@ class FetchDialog(QDialog):
                 added = True
 
         if self.cfg.get("remember_last", True):
-            save_config({"note_type": model["name"], "deck": deck_name, "source": self.source_combo.currentData()})
+            source_ids = self._selected_source_ids()
+            save_config({"note_type": model["name"], "deck": deck_name, "sources": source_ids})
         mw.reset()
         tooltip("Note added.", parent=self)
         if open_editor:

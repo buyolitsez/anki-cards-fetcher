@@ -46,7 +46,11 @@
   ],
   "max_examples": 3,
   "max_synonyms": 4,
-  "source": "wiktionary",
+  "sources": [
+    "cambridge",
+    "wiktionary",
+    "wiktionary_en"
+  ],
   "image_search": {
     "provider": "duckduckgo",
     "max_results": 12,

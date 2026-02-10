@@ -4,11 +4,13 @@ import json
 import os
 import traceback
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from aqt import mw
 
 DEFAULT_IMAGE_PROVIDER = "duckduckgo"
+SUPPORTED_SOURCE_IDS = ("cambridge", "wiktionary", "wiktionary_en")
+DEFAULT_SOURCE_ID = "cambridge"
 
 DEFAULT_CONFIG: Dict = {
     "note_type": None,
@@ -32,8 +34,8 @@ DEFAULT_CONFIG: Dict = {
     "dialect_priority": ["us", "uk"],
     "max_examples": 2,
     "max_synonyms": 4,
-    # Dictionary source: cambridge | wiktionary | wiktionary_en
-    "source": "cambridge",
+    # Dictionary source IDs: cambridge | wiktionary | wiktionary_en
+    "sources": [DEFAULT_SOURCE_ID],
     "image_search": {
         "provider": DEFAULT_IMAGE_PROVIDER,
         "max_results": 12,
@@ -94,6 +96,8 @@ def get_config() -> Dict:
     merged = json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy defaults
     for k, v in stored.items():
         merged[k] = v
+    merged["sources"] = normalize_sources(stored.get("sources"), fallback_source=stored.get("source"))
+    merged.pop("source", None)
     # ensure nested dict keeps defaults too
     merged["field_map"] = normalize_field_map(
         {**DEFAULT_CONFIG.get("field_map", {}), **(stored.get("field_map") or {})}
@@ -116,6 +120,8 @@ def get_config() -> Dict:
 def save_config(updates: Dict):
     cfg = get_config()
     cfg.update(updates)
+    cfg["sources"] = normalize_sources(cfg.get("sources"))
+    cfg.pop("source", None)
     cfg["field_map"] = normalize_field_map(
         {**DEFAULT_CONFIG.get("field_map", {}), **(cfg.get("field_map") or {})}
     )
@@ -170,6 +176,29 @@ def normalize_field_map(fmap: Dict) -> Dict[str, list]:
         if names:
             normalized[key] = names
     return normalized
+
+
+def normalize_source_id(raw) -> str:
+    if isinstance(raw, str):
+        source_id = raw.strip().lower()
+        if source_id in SUPPORTED_SOURCE_IDS:
+            return source_id
+    return DEFAULT_SOURCE_ID
+
+
+def normalize_sources(raw, fallback_source: Optional[str] = None) -> list[str]:
+    fallback = normalize_source_id(fallback_source)
+    values = raw if isinstance(raw, (list, tuple)) else [raw]
+    selected: list[str] = []
+    for item in values:
+        if not isinstance(item, str):
+            continue
+        source_id = item.strip().lower()
+        if source_id in SUPPORTED_SOURCE_IDS and source_id not in selected:
+            selected.append(source_id)
+    if not selected:
+        selected.append(fallback)
+    return selected
 
 
 def normalize_image_search(raw) -> Dict:

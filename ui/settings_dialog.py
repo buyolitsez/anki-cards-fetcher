@@ -49,15 +49,20 @@ class SettingsDialog(QDialog):
             idx = 0
         self.deck_combo.setCurrentIndex(idx)
 
-        # default source
-        self.source_combo = QComboBox()
+        # default sources
+        self.source_checks = {}
+        cfg_sources = self.cfg.get("sources") if isinstance(self.cfg.get("sources"), list) else []
+        selected_sources = {str(source_id).strip() for source_id in cfg_sources if source_id}
+        if not selected_sources:
+            default_sources = DEFAULT_CONFIG.get("sources") or []
+            selected_sources.add(str(default_sources[0] if default_sources else "cambridge"))
         for fetcher in get_fetchers(self.cfg):
-            self.source_combo.addItem(fetcher.LABEL, fetcher.ID)
-        cfg_source = (self.cfg.get("source") or DEFAULT_CONFIG["source"]).strip()
-        idx = self.source_combo.findData(cfg_source)
-        if idx == -1:
-            idx = 0
-        self.source_combo.setCurrentIndex(idx)
+            chk = QCheckBox(fetcher.LABEL)
+            chk.setChecked(fetcher.ID in selected_sources)
+            self.source_checks[fetcher.ID] = chk
+        if self.source_checks and not any(chk.isChecked() for chk in self.source_checks.values()):
+            first_chk = next(iter(self.source_checks.values()))
+            first_chk.setChecked(True)
 
         # remember last
         self.remember_chk = QCheckBox("Remember last selections in dialog")
@@ -125,8 +130,9 @@ class SettingsDialog(QDialog):
         form.addWidget(self.ntype_combo)
         form.addWidget(QLabel("Default deck:"))
         form.addWidget(self.deck_combo)
-        form.addWidget(QLabel("Default source:"))
-        form.addWidget(self.source_combo)
+        form.addWidget(QLabel("Default sources for fetch:"))
+        for chk in self.source_checks.values():
+            form.addWidget(chk)
         form.addWidget(self.remember_chk)
         form.addWidget(QLabel("Audio/IPA dialect priority (Cambridge only):"))
         dialect_row = QHBoxLayout()
@@ -216,7 +222,16 @@ class SettingsDialog(QDialog):
     def on_save(self):
         note_type = self.ntype_combo.currentData() or None
         deck = self.deck_combo.currentData() or None
-        source = self.source_combo.currentData() or DEFAULT_CONFIG["source"]
+        sources = [source_id for source_id, chk in self.source_checks.items() if chk.isChecked()]
+        if not sources:
+            default_sources = DEFAULT_CONFIG.get("sources") or []
+            default_source = str(default_sources[0] if default_sources else "cambridge")
+            if default_source in self.source_checks:
+                sources = [default_source]
+            elif self.source_checks:
+                sources = [next(iter(self.source_checks.keys()))]
+            else:
+                sources = [default_source]
         dialect_priority = ["uk", "us"] if self.uk_first.isChecked() else ["us", "uk"]
         image_search = {
             "provider": self.image_provider.currentData() or DEFAULT_IMAGE_PROVIDER,
@@ -249,7 +264,7 @@ class SettingsDialog(QDialog):
                 "deck": deck,
                 "remember_last": self.remember_chk.isChecked(),
                 "dialect_priority": dialect_priority,
-                "source": source,
+                "sources": sources,
                 "field_map": fmap,
                 "wiktionary": {"field_map": wiki_fmap},
                 "image_search": image_search,

@@ -5,6 +5,7 @@ An Anki add-on that fills notes with data from Cambridge Dictionary, ru.wiktiona
 ## Features
 - Fetches word, definitions, examples, synonyms, and part of speech.
 - Extracts IPA and audio when available.
+- Fetches from multiple sources at once.
 - Adds an image to a note field via a dedicated image search dialog.
 - Suggests close word variants when no exact match is found (typo/fuzzy suggestions).
 - Validates typo suggestions against real dictionary entries.
@@ -18,7 +19,7 @@ An Anki add-on that fills notes with data from Cambridge Dictionary, ru.wiktiona
 
 ## Usage
 1. Open `Tools -> Dictionary Fetch (Cambridge/Wiktionary)`.
-2. Enter a word and choose a source.
+2. Enter a word and choose one or more sources.
 3. Click `Fetch` and select a sense.
 4. Optionally click `Find Image` and choose an image.
 5. Click `Insert` or `Insert & Edit`.
@@ -48,7 +49,7 @@ Open `Tools -> Dictionary Fetch - Settings`.
 
 Available options:
 - default note type and deck;
-- default source;
+- default sources;
 - Cambridge dialect priority (UK/US);
 - image result count and `safe_search`;
 - typo suggestions on/off and max number of confirmed suggestions;
