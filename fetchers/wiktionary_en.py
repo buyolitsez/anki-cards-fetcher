@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover
 from ..media import USER_AGENT
 from ..models import Sense
 from .base import BaseFetcher
-from .wiktionary_common import log_fetch, suggest_via_opensearch
+from .wiktionary_common import suggest_via_opensearch
 
 HEADING_TAGS = ("h2", "h3", "h4", "h5", "h6")
 POS_TITLES = {
@@ -65,22 +65,17 @@ class EnglishWiktionaryFetcher(BaseFetcher):
             raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
 
         url = self.BASE.format(word=quote(word.strip()))
-        log_fetch(f"[wiktionary-en] fetch '{word}' -> {url}")
         try:
             resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
-            log_fetch(f"[wiktionary-en] status {resp.status_code}, len={len(resp.text)}")
         except Exception as e:
-            log_fetch(f"[wiktionary-en] request failed: {e}")
             raise RuntimeError(f"Wiktionary request failed: {e}")
         if resp.status_code == 404:
-            log_fetch(f"[wiktionary-en] 404 for '{word}'")
             return []
         if resp.status_code >= 400:
             raise RuntimeError(f"Wiktionary returned {resp.status_code} for '{word}'.")
 
         soup = BeautifulSoup(resp.text, "html.parser")
         lang_root = self._language_headline(soup, "English")
-        log_fetch(f"[wiktionary-en] lang_root found: {bool(lang_root)}")
         if not lang_root:
             return []
 
@@ -92,7 +87,6 @@ class EnglishWiktionaryFetcher(BaseFetcher):
                     s.picture_url = picture
                 if not s.picture_referer:
                     s.picture_referer = "https://en.wiktionary.org/"
-        log_fetch(f"[wiktionary-en] senses found: {len(senses)}, picture: {bool(picture)}")
         return senses
 
     def suggest(self, word: str, limit: int = 8) -> List[str]:
@@ -102,7 +96,6 @@ class EnglishWiktionaryFetcher(BaseFetcher):
             query=word,
             limit=limit,
             user_agent=USER_AGENT,
-            log_tag="wiktionary-en",
         )
 
     # ----------------------- helpers -----------------------

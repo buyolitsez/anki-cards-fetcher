@@ -1,17 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import List
-
-LOG_PATH = Path(__file__).resolve().parent.parent / "fetch_log.txt"
-
-
-def log_fetch(message: str):
-    try:
-        with LOG_PATH.open("a", encoding="utf-8") as f:
-            f.write(message + "\n")
-    except Exception:
-        pass
 
 
 def _safe_limit(limit: int, minimum: int = 1, maximum: int = 20) -> int:
@@ -50,7 +39,6 @@ def suggest_via_opensearch(
     query: str,
     limit: int,
     user_agent: str,
-    log_tag: str,
 ) -> List[str]:
     safe_query = query.strip()
     if not requests_mod or not safe_query:
@@ -69,8 +57,7 @@ def suggest_via_opensearch(
             },
             timeout=15,
         )
-    except Exception as e:
-        log_fetch(f"[{log_tag}] suggest failed: {e}")
+    except Exception:
         return []
     if resp.status_code >= 400:
         return []

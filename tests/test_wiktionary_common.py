@@ -32,17 +32,13 @@ def test_suggest_via_opensearch_success_clamps_limit():
         query="huose",
         limit=999,
         user_agent="ua",
-        log_tag="tag",
     )
     assert out == ["house", "hose"]
     assert calls["url"] == "https://example.org/api"
     assert calls["kwargs"]["params"]["limit"] == 20
 
 
-def test_suggest_via_opensearch_request_error_logs(monkeypatch):
-    log_messages = []
-    monkeypatch.setattr(wc, "log_fetch", log_messages.append)
-
+def test_suggest_via_opensearch_request_error_returns_empty():
     class _Requests:
         def get(self, *_args, **_kwargs):
             raise RuntimeError("boom")
@@ -53,20 +49,8 @@ def test_suggest_via_opensearch_request_error_logs(monkeypatch):
         query="test",
         limit=5,
         user_agent="ua",
-        log_tag="wiktionary-en",
     )
     assert out == []
-    assert log_messages
-    assert "wiktionary-en" in log_messages[0]
-
-
-def test_log_fetch_swallows_io_errors(monkeypatch):
-    class _BrokenPath:
-        def open(self, *_args, **_kwargs):
-            raise OSError("nope")
-
-    monkeypatch.setattr(wc, "LOG_PATH", _BrokenPath())
-    wc.log_fetch("message")
 
 
 def test_safe_limit_handles_invalid_values():
@@ -91,7 +75,6 @@ def test_suggest_via_opensearch_early_return_cases():
         query="test",
         limit=5,
         user_agent="ua",
-        log_tag="tag",
     ) == []
     assert wc.suggest_via_opensearch(
         requests_mod=object(),
@@ -99,7 +82,6 @@ def test_suggest_via_opensearch_early_return_cases():
         query="   ",
         limit=5,
         user_agent="ua",
-        log_tag="tag",
     ) == []
 
 
@@ -114,7 +96,6 @@ def test_suggest_via_opensearch_http_error_and_bad_json():
         query="test",
         limit=5,
         user_agent="ua",
-        log_tag="tag",
     ) == []
 
     class _RespBadJson:
@@ -133,5 +114,4 @@ def test_suggest_via_opensearch_http_error_and_bad_json():
         query="test",
         limit=5,
         user_agent="ua",
-        log_tag="tag",
     ) == []
