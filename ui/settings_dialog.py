@@ -30,7 +30,7 @@ class SettingsDialog(QDialog):
 
         # note type selector
         self.ntype_combo = QComboBox()
-        self.ntype_combo.addItem("Авто (первый в списке)", "")
+        self.ntype_combo.addItem("Auto (first in list)", "")
         for name in col.models.allNames():
             self.ntype_combo.addItem(name, name)
         cfg_model = (self.cfg.get("note_type") or "").strip()
@@ -41,7 +41,7 @@ class SettingsDialog(QDialog):
 
         # deck selector
         self.deck_combo = QComboBox()
-        self.deck_combo.addItem("Текущая выбранная", "")
+        self.deck_combo.addItem("Current selected deck", "")
         for name in col.decks.allNames():
             self.deck_combo.addItem(name, name)
         cfg_deck = (self.cfg.get("deck") or "").strip()
@@ -257,5 +257,5 @@ class SettingsDialog(QDialog):
                 "typo_suggestions": typo_suggestions,
             }
         )
-        tooltip("Настройки сохранены.", parent=self)
+        tooltip("Settings saved.", parent=self)
         self.accept()

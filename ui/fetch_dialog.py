@@ -228,9 +228,9 @@ class SuggestionPickerDialog(QDialog):
         self._confirmed = 0
         self._finished = False
 
-        self.setWindowTitle("Suggestions / Варианты")
+        self.setWindowTitle("Suggestions")
         layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"No exact match for '{word}'.\nТочного совпадения нет. Проверка вариантов..."))
+        layout.addWidget(QLabel(f"No exact match for '{word}'.\nChecking suggestions..."))
         self.status_label = QLabel("Checking candidates...")
         layout.addWidget(self.status_label)
         self.lst = QListWidget()
