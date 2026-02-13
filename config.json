@@ -58,6 +58,6 @@
   },
   "typo_suggestions": {
     "enabled": true,
-    "max_results": 16
+    "max_results": 30
   }
 }

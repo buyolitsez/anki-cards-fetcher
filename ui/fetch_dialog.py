@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 import traceback
+import webbrowser
 from typing import Callable, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from aqt import dialogs, mw
 from aqt.qt import (
@@ -14,6 +16,7 @@ from aqt.qt import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPixmap,
     QPushButton,
     QTextEdit,
     QTimer,
@@ -24,11 +27,184 @@ from aqt.utils import showInfo, showWarning, tooltip
 
 from ..config import get_config, save_config
 from ..fetchers import get_fetcher_by_id, get_fetchers
-from ..media import download_to_media
+from ..media import USER_AGENT, download_to_media
 from ..models import Sense
 from ..typo import fallback_queries, rank_suggestions
 from .image_search_dialog import ImageSearchDialog
 from .source_utils import configured_source_ids, ensure_source_selection
+
+
+class PicturePreviewDialog(QDialog):
+    def __init__(
+        self,
+        parent,
+        picture_url: str,
+        picture_referer: Optional[str] = None,
+        picture_thumb_url: Optional[str] = None,
+        picture_thumb_bytes: Optional[bytes] = None,
+    ):
+        super().__init__(parent)
+        self.picture_url = picture_url
+        self.picture_referer = picture_referer
+        self.picture_thumb_url = picture_thumb_url
+        self.picture_thumb_bytes = picture_thumb_bytes
+        self._pixmap: Optional[QPixmap] = None
+
+        self.setWindowTitle("Picture preview")
+        self.resize(760, 560)
+
+        self.status_label = QLabel("Loading image...")
+        self.status_label.setWordWrap(True)
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter if hasattr(Qt, "AlignmentFlag") else Qt.AlignCenter)
+        self.image_label.setMinimumHeight(300)
+
+        open_btn = QPushButton("Open in Browser")
+        close_btn = QPushButton("Close")
+        open_btn.clicked.connect(self._open_in_browser)
+        close_btn.clicked.connect(self.accept)
+
+        btns = QHBoxLayout()
+        btns.addWidget(open_btn)
+        btns.addStretch(1)
+        btns.addWidget(close_btn)
+
+        main = QVBoxLayout()
+        main.addWidget(self.status_label)
+        main.addWidget(self.image_label, 1)
+        main.addLayout(btns)
+        self.setLayout(main)
+
+        self._load_picture()
+
+    def _open_in_browser(self):
+        try:
+            webbrowser.open(self._resolved_url(self.picture_url))
+        except Exception as e:
+            showWarning(f"Cannot open browser: {e}")
+
+    def _resolved_url(self, raw_url: Optional[str]) -> str:
+        url = (raw_url or "").strip()
+        if url.startswith("//"):
+            return "https:" + url
+        if url.startswith("/"):
+            if self.picture_referer:
+                ref = urlsplit(self.picture_referer)
+                if ref.scheme and ref.netloc:
+                    return f"{ref.scheme}://{ref.netloc}{url}"
+            return "https://dictionary.cambridge.org" + url
+        return url
+
+    def _load_picture(self):
+        def task():
+            import requests
+
+            errors: List[str] = []
+
+            def try_download(url: Optional[str], referer: Optional[str], label: str):
+                resolved = self._resolved_url(url)
+                if not resolved:
+                    return None
+                headers = {
+                    "User-Agent": USER_AGENT,
+                    "Accept": "image/*,*/*;q=0.8",
+                }
+                if referer:
+                    headers["Referer"] = referer
+                try:
+                    resp = requests.get(resolved, headers=headers, timeout=15)
+                    resp.raise_for_status()
+                except Exception as e:
+                    errors.append(f"{label}: {e}")
+                    return None
+                content_type = (resp.headers.get("Content-Type") or "").strip()
+                return resp.content, content_type, resolved
+
+            full = try_download(self.picture_url, self.picture_referer, "full")
+            if full:
+                content, content_type, resolved = full
+                return content, content_type, resolved, "full"
+
+            thumb = try_download(self.picture_thumb_url, None, "thumb")
+            if thumb:
+                content, content_type, resolved = thumb
+                return content, content_type, resolved, "thumb"
+
+            if self.picture_thumb_bytes:
+                return self.picture_thumb_bytes, "image/*", "thumbnail-bytes", "thumb-bytes"
+
+            msg = "; ".join(errors[:2]) if errors else "image download failed"
+            raise RuntimeError(msg)
+
+        def on_done(future):
+            try:
+                content, content_type, resolved_url, source_kind = future.result()
+            except Exception as e:
+                self.status_label.setText(f"Image load failed: {e}")
+                return
+
+            pix = QPixmap()
+            if not pix.loadFromData(content):
+                self.status_label.setText("Cannot decode image bytes.")
+                return
+
+            self._pixmap = pix
+            self._apply_scaled_pixmap()
+            size_kb = max(1, round(len(content) / 1024))
+            quality = self._quality_hint(pix.width(), pix.height())
+            ctype = content_type or "unknown"
+            prefix = ""
+            if source_kind != "full":
+                prefix = "Full image blocked/unavailable. Showing thumbnail.\n"
+            self.status_label.setText(
+                f"{prefix}{pix.width()}x{pix.height()} px, ~{size_kb} KB, {ctype}. {quality}\n{resolved_url}"
+            )
+
+        self._run_in_background(task, on_done)
+
+    def _run_in_background(self, task, on_done):
+        if hasattr(mw, "taskman"):
+            mw.taskman.run_in_background(task, on_done)
+            return
+        try:
+            value = task()
+            on_done(_InlineFuture(value=value))
+        except Exception as e:
+            on_done(_InlineFuture(exc=e))
+
+    def _apply_scaled_pixmap(self):
+        if not self._pixmap:
+            self.image_label.clear()
+            return
+        area = self.image_label.size()
+        if area.width() <= 0 or area.height() <= 0:
+            return
+        mode = Qt.AspectRatioMode.KeepAspectRatio if hasattr(Qt, "AspectRatioMode") else Qt.KeepAspectRatio
+        transform = Qt.TransformationMode.SmoothTransformation if hasattr(Qt, "TransformationMode") else Qt.SmoothTransformation
+        scaled = self._pixmap.scaled(area, mode, transform)
+        self.image_label.setPixmap(scaled)
+
+    def resizeEvent(self, event):  # type: ignore[override]
+        self._apply_scaled_pixmap()
+        super().resizeEvent(event)
+
+    def _quality_hint(self, width: int, height: int) -> str:
+        if width >= 1000 and height >= 700:
+            return "Quality: high."
+        if width >= 600 and height >= 400:
+            return "Quality: medium."
+        return "Quality: low, consider replacing."
+
+
+class _InlineFuture:
+    def __init__(self, value=None, exc: Optional[Exception] = None):
+        self._value = value
+        self._exc = exc
+
+    def result(self):
+        if self._exc:
+            raise self._exc
+        return self._value
 
 
 class SuggestionPickerDialog(QDialog):
@@ -181,6 +357,7 @@ class FetchDialog(QDialog):
         self.edit_btn = QPushButton("Insert & Edit")
         self.insert_btn = QPushButton("Insert")
         self.image_btn = QPushButton("Find Image")
+        self.preview_image_btn = QPushButton("Preview Image")
         self.clear_image_btn = QPushButton("Clear Image")
 
         self.ntype_combo = QComboBox()
@@ -206,6 +383,7 @@ class FetchDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.image_btn)
+        buttons.addWidget(self.preview_image_btn)
         buttons.addWidget(self.clear_image_btn)
         buttons.addWidget(self.edit_btn)
         buttons.addWidget(self.insert_btn)
@@ -225,9 +403,11 @@ class FetchDialog(QDialog):
         self.edit_btn.clicked.connect(lambda: self.on_insert(open_editor=True))
         self.sense_list.itemDoubleClicked.connect(lambda _: self.on_insert(open_editor=True))
         self.image_btn.clicked.connect(self.on_find_image)
+        self.preview_image_btn.clicked.connect(self.on_preview_image)
         self.clear_image_btn.clicked.connect(self.on_clear_image)
         self.ntype_combo.currentTextChanged.connect(self._remember_selection)
         self.deck_combo.currentTextChanged.connect(self._remember_selection)
+        self._update_image_buttons(-1)
 
     # ---------- UI helpers ----------
     def _populate_models(self):
@@ -500,10 +680,14 @@ class FetchDialog(QDialog):
     def on_select(self, row: int):
         if row < 0 or row >= len(self.senses):
             self.preview.clear()
+            self._update_image_buttons(row)
             return
         sense = self.senses[row]
         source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
         ipa = self._choose_ipa(sense.ipa)
+        picture_line = f"Picture: {'yes' if sense.picture_url else 'no'}"
+        if sense.picture_url:
+            picture_line += f"\nPicture URL: {sense.picture_url}"
         text = [
             f"Source: {self._source_label(source_id)}",
             f"Definition: {sense.definition}",
@@ -513,9 +697,16 @@ class FetchDialog(QDialog):
             f"POS: {sense.pos or '-'}",
             f"IPA: {ipa or '-'}",
             f"Audio: {', '.join(sense.audio_urls.keys()) or '-'}",
-            f"Picture: {'yes' if sense.picture_url else 'no'}",
+            picture_line,
         ]
         self.preview.setPlainText("\n".join(text))
+        self._update_image_buttons(row)
+
+    def _update_image_buttons(self, row: int):
+        has_picture = 0 <= row < len(self.senses) and bool(self.senses[row].picture_url)
+        self.preview_image_btn.setVisible(has_picture)
+        self.preview_image_btn.setEnabled(has_picture)
+        self.clear_image_btn.setEnabled(has_picture)
 
     def on_find_image(self):
         row = self.sense_list.currentRow()
@@ -533,7 +724,27 @@ class FetchDialog(QDialog):
             sense = self.senses[row]
             sense.picture_url = dlg.selected.image_url
             sense.picture_referer = dlg.selected.source_url
+            sense.picture_thumb_url = dlg.selected.thumb_url
+            sense.picture_thumb_bytes = dlg.selected.thumb_bytes
             self._refresh_sense_item(row)
+
+    def on_preview_image(self):
+        row = self.sense_list.currentRow()
+        if row < 0 or row >= len(self.senses):
+            showWarning("Select a sense first.")
+            return
+        sense = self.senses[row]
+        if not sense.picture_url:
+            showInfo("No image for this sense.")
+            return
+        dlg = PicturePreviewDialog(
+            self,
+            picture_url=sense.picture_url,
+            picture_referer=sense.picture_referer,
+            picture_thumb_url=sense.picture_thumb_url,
+            picture_thumb_bytes=sense.picture_thumb_bytes,
+        )
+        dlg.exec()
 
     def on_clear_image(self):
         row = self.sense_list.currentRow()
@@ -543,6 +754,8 @@ class FetchDialog(QDialog):
         sense = self.senses[row]
         sense.picture_url = None
         sense.picture_referer = None
+        sense.picture_thumb_url = None
+        sense.picture_thumb_bytes = None
         self._refresh_sense_item(row)
 
     def on_insert(self, open_editor: bool = False):
