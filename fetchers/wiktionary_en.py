@@ -1,135 +1,104 @@
+"""en.wiktionary.org fetcher — extracts English word senses, IPA, audio, etc."""
+
 from __future__ import annotations
 
 import re
 from typing import Dict, List, Optional
 from urllib.parse import quote, unquote
 
-try:
-    import requests
-except Exception:  # pragma: no cover
-    requests = None  # type: ignore
-
-try:
-    from bs4 import BeautifulSoup  # type: ignore
-except Exception:  # pragma: no cover
-    BeautifulSoup = None  # type: ignore
-
+from ..http_client import require_bs4
 from ..logger import get_logger
-from ..media import USER_AGENT
 from ..models import Sense
-from .base import BaseFetcher
-from .wiktionary_common import suggest_via_opensearch
+from .wiktionary_common import BaseWiktionaryFetcher
 
 logger = get_logger(__name__)
 
 HEADING_TAGS = ("h2", "h3", "h4", "h5", "h6")
 POS_TITLES = {
-    "noun",
-    "proper noun",
-    "verb",
-    "adjective",
-    "adverb",
-    "pronoun",
-    "determiner",
-    "preposition",
-    "conjunction",
-    "interjection",
-    "numeral",
-    "article",
-    "particle",
-    "prefix",
-    "suffix",
-    "abbreviation",
-    "initialism",
-    "acronym",
-    "phrase",
-    "idiom",
-    "proverb",
-    "symbol",
-    "letter",
-    "noun phrase",
-    "verb phrase",
-    "adjective phrase",
-    "adverb phrase",
+    "noun", "proper noun", "verb", "adjective", "adverb", "pronoun",
+    "determiner", "preposition", "conjunction", "interjection", "numeral",
+    "article", "particle", "prefix", "suffix", "abbreviation", "initialism",
+    "acronym", "phrase", "idiom", "proverb", "symbol", "letter",
+    "noun phrase", "verb phrase", "adjective phrase", "adverb phrase",
     "prepositional phrase",
 }
 
 
-class EnglishWiktionaryFetcher(BaseFetcher):
+class EnglishWiktionaryFetcher(BaseWiktionaryFetcher):
     ID = "wiktionary_en"
     LABEL = "en.wiktionary.org (en)"
-    BASE = "https://en.wiktionary.org/wiki/{word}"
+    WIKI_BASE = "https://en.wiktionary.org/wiki/{word}"
     API_BASE = "https://en.wiktionary.org/w/api.php"
+    TARGET_LANGUAGE = "English"
+    WIKI_REFERER = "https://en.wiktionary.org/"
 
-    def fetch(self, word: str) -> List[Sense]:
-        logger.info("Wiktionary (en): fetching '%s'", word)
-        if not requests:
-            raise RuntimeError("requests module not found. Install requests in the Anki environment.")
-        if not BeautifulSoup:
-            raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
-
-        url = self.BASE.format(word=quote(word.strip()))
-        logger.debug("Wiktionary (en): requesting %s", url)
-        try:
-            resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
-        except Exception as e:
-            logger.error("Wiktionary (en): request failed for '%s': %s", word, e)
-            raise RuntimeError(f"Wiktionary request failed: {e}")
-        if resp.status_code == 404:
-            logger.debug("Wiktionary (en): 404 for '%s'", word)
-            return []
-        if resp.status_code >= 400:
-            logger.error("Wiktionary (en): HTTP %d for '%s'", resp.status_code, word)
-            raise RuntimeError(f"Wiktionary returned {resp.status_code} for '{word}'.")
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        lang_root = self._language_headline(soup, "English")
-        if not lang_root:
-            logger.debug("Wiktionary (en): no English section found for '%s'", word)
-            return []
-
-        senses = self._parse_senses(lang_root)
-        picture = self._extract_picture(lang_root)
-        if picture:
-            for s in senses:
-                if not s.picture_url:
-                    s.picture_url = picture
-                if not s.picture_referer:
-                    s.picture_referer = "https://en.wiktionary.org/"
-        logger.info("Wiktionary (en): found %d senses for '%s'", len(senses), word)
+    # _parse_senses is the only required override
+    def _parse_senses(self, lang_root) -> List[Sense]:
+        senses: List[Sense] = []
+        current_ipa: Dict[str, str] = {}
+        current_audio: Dict[str, str] = {}
+        for heading in self._iter_headings(lang_root):
+            title = self._normalize_title(self._heading_text(heading))
+            title_l = title.casefold()
+            if title_l.startswith("etymology"):
+                current_ipa = {}
+                current_audio = {}
+                continue
+            if title_l == "pronunciation":
+                current_ipa, current_audio = self._parse_pronunciation_section(heading)
+                continue
+            if title_l not in POS_TITLES:
+                continue
+            nodes = self._section_nodes(heading)
+            synonyms = self._parse_synonyms(nodes)
+            for ol in self._definition_lists(nodes):
+                for li in ol.find_all("li", recursive=False):
+                    definition = self._extract_definition(li)
+                    if not definition:
+                        continue
+                    examples = self._extract_examples(li)
+                    senses.append(
+                        Sense(
+                            definition=definition,
+                            examples=examples,
+                            synonyms=synonyms[:],
+                            pos=title,
+                            ipa=current_ipa.copy(),
+                            audio_urls=current_audio.copy(),
+                        )
+                    )
         return senses
 
-    def suggest(self, word: str, limit: int = 8) -> List[str]:
-        return suggest_via_opensearch(
-            requests_mod=requests,
-            api_base=self.API_BASE,
-            query=word,
-            limit=limit,
-            user_agent=USER_AGENT,
-        )
+    def _extract_picture(self, lang_root) -> Optional[str]:
+        """Override: en.wiktionary lang_root may be an h2, so we need section_nodes."""
+        from .wiktionary_common import _IMAGE_BLACKLIST, _MIN_IMAGE_SIZE
+        nodes = []
+        if getattr(lang_root, "name", "") == "section":
+            nodes = list(lang_root.find_all(True))
+        elif getattr(lang_root, "name", "") in HEADING_TAGS:
+            nodes = self._section_nodes(lang_root)
+        for node in nodes:
+            if getattr(node, "name", None) != "img":
+                continue
+            src = node.get("src") or node.get("data-src") or ""
+            if not src:
+                continue
+            src = src.split(",")[0].split()[0]
+            if any(bad in src.lower() for bad in _IMAGE_BLACKLIST):
+                continue
+            if "upload.wikimedia.org" not in src and "wikimedia.org" not in src:
+                continue
+            try:
+                width = int(node.get("data-file-width") or node.get("width") or 0)
+                height = int(node.get("data-file-height") or node.get("height") or 0)
+            except Exception:
+                width = height = 0
+            if width and height and (width < _MIN_IMAGE_SIZE or height < _MIN_IMAGE_SIZE):
+                continue
+            return self._normalize_url(src)
+        return None
 
     # ----------------------- helpers -----------------------
-    def _language_headline(self, soup, language: str):
-        lang_cf = language.casefold()
-        # parsoid sections
-        for sec in soup.find_all("section"):
-            aria = (sec.get("aria-labelledby") or "").casefold()
-            if lang_cf in aria:
-                return sec
-
-        headline = soup.find(id=language)
-        if not headline:
-            for span in soup.select(".mw-headline"):
-                text = (span.get_text(strip=True) or "").casefold()
-                sid = (span.get("id") or "").casefold()
-                if text == lang_cf or sid == lang_cf:
-                    headline = span
-                    break
-        if not headline:
-            return None
-        if headline.name in HEADING_TAGS or headline.name == "section":
-            return headline
-        return headline.find_parent(list(HEADING_TAGS))
 
     def _iter_headings(self, lang_root):
         if not lang_root:
@@ -184,42 +153,6 @@ class EnglishWiktionaryFetcher(BaseFetcher):
                     audio_map[key] = url
         return ipa_map, audio_map
 
-    def _parse_senses(self, lang_root) -> List[Sense]:
-        senses: List[Sense] = []
-        current_ipa: Dict[str, str] = {}
-        current_audio: Dict[str, str] = {}
-        for heading in self._iter_headings(lang_root):
-            title = self._normalize_title(self._heading_text(heading))
-            title_l = title.casefold()
-            if title_l.startswith("etymology"):
-                current_ipa = {}
-                current_audio = {}
-                continue
-            if title_l == "pronunciation":
-                current_ipa, current_audio = self._parse_pronunciation_section(heading)
-                continue
-            if title_l not in POS_TITLES:
-                continue
-            nodes = self._section_nodes(heading)
-            synonyms = self._parse_synonyms(nodes)
-            for ol in self._definition_lists(nodes):
-                for li in ol.find_all("li", recursive=False):
-                    definition = self._extract_definition(li)
-                    if not definition:
-                        continue
-                    examples = self._extract_examples(li)
-                    senses.append(
-                        Sense(
-                            definition=definition,
-                            examples=examples,
-                            synonyms=synonyms[:],
-                            pos=title,
-                            ipa=current_ipa.copy(),
-                            audio_urls=current_audio.copy(),
-                        )
-                    )
-        return senses
-
     def _parse_synonyms(self, nodes) -> List[str]:
         synonyms: List[str] = []
         for node in nodes:
@@ -252,7 +185,8 @@ class EnglishWiktionaryFetcher(BaseFetcher):
 
     def _extract_definition(self, li) -> str:
         try:
-            soup = BeautifulSoup(str(li), "html.parser")
+            BS = require_bs4()
+            soup = BS(str(li), "html.parser")
             li_copy = soup.find("li")
         except Exception:
             li_copy = None
@@ -268,11 +202,7 @@ class EnglishWiktionaryFetcher(BaseFetcher):
         examples: List[str] = []
         seen: set[str] = set()
         preferred_selectors = [
-            ".quotation",
-            ".quote",
-            ".usage-example",
-            ".example",
-            ".use-with-mention",
+            ".quotation", ".quote", ".usage-example", ".example", ".use-with-mention",
         ]
         for sel in preferred_selectors:
             for node in li.select(sel):
@@ -284,33 +214,6 @@ class EnglishWiktionaryFetcher(BaseFetcher):
             html, text = self._clean_example_html(html)
             self._add_example(examples, seen, html, text)
         return examples
-
-    def _extract_picture(self, lang_root) -> Optional[str]:
-        nodes = []
-        if getattr(lang_root, "name", "") == "section":
-            nodes = list(lang_root.find_all(True))
-        elif getattr(lang_root, "name", "") in HEADING_TAGS:
-            nodes = self._section_nodes(lang_root)
-        for node in nodes:
-            if getattr(node, "name", None) != "img":
-                continue
-            src = node.get("src") or node.get("data-src") or ""
-            if not src:
-                continue
-            src = src.split(",")[0].split()[0]
-            if any(bad in src.lower() for bad in ("icon", "logo", "svg", "favicon")):
-                continue
-            if "upload.wikimedia.org" not in src and "wikimedia.org" not in src:
-                continue
-            try:
-                width = int(node.get("data-file-width") or node.get("width") or 0)
-                height = int(node.get("data-file-height") or node.get("height") or 0)
-            except Exception:
-                width = height = 0
-            if width and height and (width < 80 or height < 80):
-                continue
-            return self._normalize_url(src)
-        return None
 
     def _heading_text(self, node) -> str:
         if not node:
@@ -331,13 +234,13 @@ class EnglishWiktionaryFetcher(BaseFetcher):
 
     def _example_html(self, node) -> str:
         try:
-            soup = BeautifulSoup(str(node), "html.parser")
+            BS = require_bs4()
+            soup = BS(str(node), "html.parser")
             root = soup.find()
         except Exception:
             root = None
         if not root:
             return ""
-        # Strip references/citations; keep bold tags only.
         for tag in list(root.find_all(True)):
             if not hasattr(tag, "get"):
                 continue
@@ -369,17 +272,13 @@ class EnglishWiktionaryFetcher(BaseFetcher):
         text = self._clean_text(self._strip_html(html))
         if not text:
             return "", ""
-        # Strip leading bullets/dashes
         html = re.sub(r"^[\u2022*\-–—]\s*", "", html)
         text = re.sub(r"^[\u2022*\-–—]\s*", "", text)
-        # Remove citation prefix when it looks like a bibliographic entry.
         if ":" in text and self._looks_like_citation_prefix(text):
             html = html.split(":", 1)[1].strip()
             text = text.split(":", 1)[1].strip()
-        # Drop trailing citation fragments like "->OCLC"
         html = re.sub(r"\s*->\s*OCLC.*$", "", html, flags=re.IGNORECASE)
         text = re.sub(r"\s*->\s*OCLC.*$", "", text, flags=re.IGNORECASE)
-        # Trim leftover punctuation
         return html.strip(" \t-–—:;"), text.strip(" \t-–—:;")
 
     def _looks_like_citation_prefix(self, text: str) -> bool:
@@ -388,21 +287,10 @@ class EnglishWiktionaryFetcher(BaseFetcher):
         if re.search(r"\b(1[5-9]\d{2}|20\d{2})\b", lower):
             return True
         tokens = [
-            "published",
-            "chapter",
-            "volume",
-            "vol.",
-            "edition",
-            "press",
-            "company",
-            "oclc",
-            "isbn",
-            "new york",
-            "london",
+            "published", "chapter", "volume", "vol.", "edition",
+            "press", "company", "oclc", "isbn", "new york", "london",
         ]
-        if any(tok in lower for tok in tokens):
-            return True
-        return False
+        return any(tok in lower for tok in tokens)
 
     def _add_example(self, examples: List[str], seen: set[str], html: str, text: str):
         if not text:
@@ -416,13 +304,14 @@ class EnglishWiktionaryFetcher(BaseFetcher):
     def _norm_example(self, text: str) -> str:
         text = text.lower()
         text = re.sub(r"\s+", " ", text).strip()
-        text = re.sub(r"[\"'“”‘’]", "", text)
+        text = re.sub(r"[\"'""'']", "", text)
         text = re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
         return text
 
     def _strip_html(self, html: str) -> str:
         try:
-            soup = BeautifulSoup(html, "html.parser")
+            BS = require_bs4()
+            soup = BS(html, "html.parser")
             return soup.get_text(" ", strip=True)
         except Exception:
             return re.sub(r"<[^>]+>", " ", html)
@@ -449,7 +338,6 @@ class EnglishWiktionaryFetcher(BaseFetcher):
         return url
 
     def _find_region(self, tag) -> Optional[str]:
-        # Try to locate UK/US hints near tag
         parents = []
         cur = tag
         for _ in range(5):
@@ -462,7 +350,6 @@ class EnglishWiktionaryFetcher(BaseFetcher):
             region = self._region_from_text(text)
             if region:
                 return region
-        # check row/label text if in a table
         tr = tag.find_parent("tr") if hasattr(tag, "find_parent") else None
         if tr:
             region = self._region_from_text(self._clean_text(tr.get_text(" ", strip=True)).lower())

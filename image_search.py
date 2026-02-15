@@ -9,13 +9,9 @@ from urllib.parse import unquote_to_bytes, urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
-try:
-    import requests
-except Exception:  # pragma: no cover - runtime guard
-    requests = None  # type: ignore
-
+from .exceptions import FetchError
+from .http_client import USER_AGENT, require_requests
 from .logger import get_logger
-from .media import USER_AGENT
 
 logger = get_logger(__name__)
 
@@ -49,8 +45,7 @@ def search_images(
     allow_fallback: bool = True,
 ) -> Tuple[List[ImageResult], str, bool]:
     logger.info("Image search: query='%s', provider=%s, max=%d, offset=%d", query, provider, max_results, offset)
-    if not requests:
-        raise RuntimeError("requests module not found. Install requests in the Anki environment.")
+    require_requests()
     q = (query or "").strip()
     if not q:
         return [], provider, False
@@ -70,7 +65,9 @@ def attach_thumbnails(
     max_bytes: int = 800_000,
     timeout: int = 10,
 ):
-    if not requests:
+    try:
+        requests = require_requests()
+    except Exception:
         return
     headers = {
         "User-Agent": USER_AGENT,
@@ -113,7 +110,7 @@ def _search_duckduckgo(
     vqd, referer = _fetch_ddg_vqd(query, html_headers, timeout=timeout)
     if not vqd:
         logger.error("DuckDuckGo: VQD token not found for '%s'", query)
-        raise RuntimeError("DuckDuckGo token not found.")
+        raise FetchError("DuckDuckGo token not found.")
 
     params = {
         "l": "us-en",
@@ -181,7 +178,7 @@ def _ddg_fetch_text(url: str, headers: dict, timeout: int = 15) -> str:
         with urlopen(req, timeout=timeout) as resp:
             data = resp.read()
     except HTTPError as exc:
-        raise RuntimeError(f"DuckDuckGo request failed ({exc.code}).") from exc
+        raise FetchError(f"DuckDuckGo request failed ({exc.code}).") from exc
     return data.decode("utf-8", "replace")
 
 
@@ -191,11 +188,11 @@ def _ddg_fetch_json(url: str, params: dict, headers: dict, timeout: int = 15) ->
         with urlopen(req, timeout=timeout) as resp:
             data = resp.read()
     except HTTPError as exc:
-        raise RuntimeError(f"DuckDuckGo request failed ({exc.code}).") from exc
+        raise FetchError(f"DuckDuckGo request failed ({exc.code}).") from exc
     try:
         return json.loads(data.decode("utf-8", "replace"))
     except Exception as exc:
-        raise RuntimeError("DuckDuckGo returned invalid JSON.") from exc
+        raise FetchError("DuckDuckGo returned invalid JSON.") from exc
 
 
 def _extract_ddg_vqd(html: str) -> Optional[str]:

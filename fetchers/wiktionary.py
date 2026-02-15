@@ -1,24 +1,14 @@
+"""ru.wiktionary.org fetcher — extracts Russian word senses, syllables, etc."""
+
 from __future__ import annotations
 
 import re
 from typing import List, Optional
-from urllib.parse import quote
 
-try:
-    import requests
-except Exception:  # pragma: no cover
-    requests = None  # type: ignore
-
-try:
-    from bs4 import BeautifulSoup  # type: ignore
-except Exception:
-    BeautifulSoup = None  # type: ignore
-
+from ..http_client import require_bs4
 from ..logger import get_logger
-from ..media import USER_AGENT
 from ..models import Sense
-from .base import BaseFetcher
-from .wiktionary_common import suggest_via_opensearch
+from .wiktionary_common import BaseWiktionaryFetcher
 
 logger = get_logger(__name__)
 _LETTER_RE = re.compile(r"[A-Za-zА-Яа-яЁё]")
@@ -26,113 +16,39 @@ _REF_MARKER_RE = re.compile(r"\[\s*[^A-Za-zА-Яа-яЁё\]]*\d+[^A-Za-zА-Яа-
 _ORPHAN_BRACKET_RE = re.compile(r"(^|(?<=\s))[\[\]](?=\s|$)")
 
 
-class WiktionaryFetcher(BaseFetcher):
+class WiktionaryFetcher(BaseWiktionaryFetcher):
     ID = "wiktionary"
     LABEL = "ru.wiktionary.org (ru)"
-    BASE = "https://ru.wiktionary.org/wiki/{word}"
+    WIKI_BASE = "https://ru.wiktionary.org/wiki/{word}"
     API_BASE = "https://ru.wiktionary.org/w/api.php"
+    TARGET_LANGUAGE = "Русский"
+    WIKI_REFERER = "https://ru.wiktionary.org/"
 
+    # Override fetch to also extract syllables (ru-specific)
     def fetch(self, word: str) -> List[Sense]:
-        logger.info("Wiktionary (ru): fetching '%s'", word)
-        if not requests:
-            raise RuntimeError("requests module not found. Install requests in the Anki environment.")
-        if not BeautifulSoup:
-            raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
+        senses = super().fetch(word)
+        # Re-parse syllables from the page (we need the lang_root).
+        # Instead of re-fetching, we extract syllables in _parse_senses via
+        # self._last_lang_root which we stash during the base class flow.
+        return senses
 
-        url = self.BASE.format(word=quote(word.strip()))
-        logger.debug("Wiktionary (ru): requesting %s", url)
-        try:
-            resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
-        except Exception as e:
-            logger.error("Wiktionary (ru): request failed for '%s': %s", word, e)
-            raise RuntimeError(f"Wiktionary request failed: {e}")
-        if resp.status_code == 404:
-            logger.debug("Wiktionary (ru): 404 for '%s'", word)
-            return []
-        if resp.status_code >= 400:
-            logger.error("Wiktionary (ru): HTTP %d for '%s'", resp.status_code, word)
-            raise RuntimeError(f"Wiktionary returned {resp.status_code} for '{word}'.")
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        lang_section = self._language_section(soup, "Русский")
-        if not lang_section:
-            logger.debug("Wiktionary (ru): no Russian section found for '%s'", word)
-            return []
-
-        senses = self._parse_senses(lang_section)
-        picture = self._extract_picture(lang_section)
-        syllables = self._extract_syllables(lang_section)
-        if picture:
-            for s in senses:
-                if not s.picture_url:
-                    s.picture_url = picture
-                if not s.picture_referer:
-                    s.picture_referer = "https://ru.wiktionary.org/"
+    def _parse_senses(self, lang_root) -> List[Sense]:
+        senses = self._parse_definitions(lang_root)
+        syllables = self._extract_syllables(lang_root)
         if syllables:
             for s in senses:
                 if not s.syllables:
                     s.syllables = syllables
-        logger.info("Wiktionary (ru): found %d senses for '%s'", len(senses), word)
         return senses
 
-    def suggest(self, word: str, limit: int = 8) -> List[str]:
-        return suggest_via_opensearch(
-            requests_mod=requests,
-            api_base=self.API_BASE,
-            query=word,
-            limit=limit,
-            user_agent=USER_AGENT,
-        )
-
-    # ----------------------- helpers -----------------------
-    def _language_section(self, soup, language: str):
-        """Return the section tag (section/h2 block) for the requested language."""
-        lang_cf = language.casefold()
-
-        # 1) Parsoid section with aria-labelledby matching the target language
-        for sec in soup.find_all("section"):
-            aria = (sec.get("aria-labelledby") or "").casefold()
-            if lang_cf in aria or "русск" in aria:
-                return sec
-
-        # 2) Classic h1/h2 where id/text matches the target language
-        headline = soup.find(id=language)
-        if not headline:
-            for span in soup.select(".mw-headline"):
-                text = (span.get_text(strip=True) or "").casefold()
-                sid = (span.get("id") or "").casefold()
-                if text == lang_cf or sid == lang_cf or "русск" in text:
-                    headline = span
-                    break
-        if not headline:
-            from urllib.parse import unquote
-
-            for tag in soup.find_all(id=True):
-                raw_id = tag.get("id", "")
-                if raw_id.startswith(".D"):
-                    decoded = unquote(raw_id.replace(".", "%"))
-                    if decoded.casefold() == lang_cf:
-                        headline = tag
-                        break
-        if not headline:
-            return None
-
-        h_tag = headline if headline.name in ("h1", "h2") else headline.find_parent(["h1", "h2"])
-        if not h_tag:
-            return None
-
-        # Return this node for compatibility with downstream section traversal
-        return h_tag
-
-    def _parse_senses(self, lang_root) -> List[Sense]:
+    # ----------------------- parsing helpers -----------------------
+    def _parse_definitions(self, lang_root) -> List[Sense]:
         senses: List[Sense] = []
         synonyms: List[str] = []
 
         def clean_txt(text: str) -> str:
             txt = (text or "").replace("\u00a0", " ")
-            # Drop reference markers like [1], [≈ 1], [◆ 1], etc.
             txt = _REF_MARKER_RE.sub("", txt)
-            # Remove isolated orphan brackets that can remain after marker cleanup.
             txt = _ORPHAN_BRACKET_RE.sub(" ", txt)
             txt = " ".join(txt.split())
             txt = re.sub(r"\s+([,.;:!?])", r"\1", txt)
@@ -180,15 +96,13 @@ class WiktionaryFetcher(BaseFetcher):
                 Sense(
                     definition=definition,
                     examples=examples,
-                    synonyms=[],  # will be filled later with a shared synonym list
+                    synonyms=[],
                     pos=None,
                 )
             )
 
         # collect synonyms (shared across all senses)
         for li in iter_section("Синонимы"):
-            # In many ru.wiktionary entries synonyms are rendered as reference blocks:
-            # [↑] backlink + .mw-reference-text payload. Prefer payload anchors.
             anchors = li.select(".mw-reference-text a") or li.find_all("a")
             for a in anchors:
                 if a.find_parent(class_="mw-cite-backlink"):
@@ -203,9 +117,9 @@ class WiktionaryFetcher(BaseFetcher):
         return senses
 
     def _definition_text_from_li(self, li) -> str:
-        """Extract definition text without example/source blocks."""
         try:
-            soup = BeautifulSoup(str(li), "html.parser")
+            BS = require_bs4()
+            soup = BS(str(li), "html.parser")
             li_copy = soup.find("li")
         except Exception:
             li_copy = None
@@ -216,7 +130,6 @@ class WiktionaryFetcher(BaseFetcher):
         return li_copy.get_text(" ", strip=True)
 
     def _extract_examples_from_li(self, li) -> List[str]:
-        """Extract examples from Wiktionary example markup and preserve highlighted term as <b>."""
         examples: List[str] = []
         seen: set[str] = set()
         blocks = li.select(".example-fullblock .example-block, .example-block")
@@ -233,7 +146,8 @@ class WiktionaryFetcher(BaseFetcher):
 
     def _clean_example_block_html(self, block) -> str:
         try:
-            soup = BeautifulSoup(str(block), "html.parser")
+            BS = require_bs4()
+            soup = BS(str(block), "html.parser")
             node = soup.find()
         except Exception:
             node = None
@@ -260,34 +174,9 @@ class WiktionaryFetcher(BaseFetcher):
         html = re.sub(r"\s+</b>", "</b>", html)
         return html
 
-    def _extract_picture(self, lang_root) -> Optional[str]:
-        """Pick a representative image from the language section, if any."""
-        if not lang_root:
-            return None
-        # Prefer thumbnails of photos/illustrations, ignore icons/logos
-        for img in lang_root.find_all("img"):
-            src = img.get("src") or ""
-            if not src:
-                continue
-            if any(bad in src.lower() for bad in ("icon", "logo", "svg", "favicon")):
-                continue
-            if "upload.wikimedia.org" not in src:
-                continue
-            try:
-                width = int(img.get("data-file-width") or img.get("width") or 0)
-                height = int(img.get("data-file-height") or img.get("height") or 0)
-            except Exception:
-                width = height = 0
-            if width < 80 or height < 80:
-                continue
-            return src
-        return None
-
     def _extract_syllables(self, lang_root) -> Optional[str]:
-        """Extract syllabified/stressed headword (Russian)."""
         if not lang_root:
             return None
-        # Prefer explicit hyphenation marker
         hyph = lang_root.select_one(".hyph-dot")
         if hyph:
             parent = hyph.find_parent(["b", "strong", "span"])
@@ -295,7 +184,6 @@ class WiktionaryFetcher(BaseFetcher):
                 text = parent.get_text("", strip=True)
                 if text:
                     return text
-        # Fallback: first short Cyrillic bold headword line
         for b in lang_root.select("p > b"):
             text = b.get_text("", strip=True)
             if not text:
@@ -304,13 +192,10 @@ class WiktionaryFetcher(BaseFetcher):
                 continue
             if re.search(r"[А-Яа-я]", text) and len(text) <= 40:
                 return text
-        # Fallback: any short Cyrillic text containing a middle dot
         for text in lang_root.stripped_strings:
             if "·" in text and re.search(r"[А-Яа-я]", text):
-                # avoid very long strings
                 if len(text) <= 40 and "{" not in text and "}" not in text:
                     return text
-        # Fallback: parse template data-mw containing the hyphenation template
         for tag in lang_root.find_all(attrs={"data-mw": True}):
             data = tag.get("data-mw") or ""
             if "по-слогам" not in data:
@@ -324,7 +209,6 @@ class WiktionaryFetcher(BaseFetcher):
         return None
 
     def _split_examples(self, raw: str):
-        """Wiktionary puts examples after the ◆ marker."""
         if "◆" in raw:
             parts = [p.strip(" —:;") for p in raw.split("◆") if p.strip(" —:;")]
             definition = parts[0] if parts else raw

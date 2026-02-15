@@ -1,10 +1,9 @@
+"""Main fetch dialog — enter a word, pick a sense, insert into Anki."""
+
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-import traceback
-import webbrowser
-from typing import Callable, Dict, List, Optional, Tuple
-from urllib.parse import urlsplit
+from typing import Dict, List, Optional, Tuple
 
 from aqt import dialogs, mw
 from aqt.qt import (
@@ -16,7 +15,6 @@ from aqt.qt import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QPixmap,
     QPushButton,
     QTextEdit,
     QTimer,
@@ -28,315 +26,23 @@ from aqt.utils import showInfo, showWarning, tooltip
 from ..config import get_config, save_config
 from ..fetchers import get_fetcher_by_id, get_fetchers
 from ..logger import get_logger
-from ..media import USER_AGENT, download_to_media
+from ..media import download_to_media
 from ..models import Sense
 from ..typo import fallback_queries, rank_suggestions
 from .image_search_dialog import ImageSearchDialog
+from .picture_preview_dialog import PicturePreviewDialog
 from .source_utils import configured_source_ids, ensure_source_selection
+from .suggestion_picker_dialog import SuggestionPickerDialog
 
 logger = get_logger(__name__)
 
-
-class PicturePreviewDialog(QDialog):
-    def __init__(
-        self,
-        parent,
-        picture_url: str,
-        picture_referer: Optional[str] = None,
-        picture_thumb_url: Optional[str] = None,
-        picture_thumb_bytes: Optional[bytes] = None,
-    ):
-        super().__init__(parent)
-        self.picture_url = picture_url
-        self.picture_referer = picture_referer
-        self.picture_thumb_url = picture_thumb_url
-        self.picture_thumb_bytes = picture_thumb_bytes
-        self._pixmap: Optional[QPixmap] = None
-
-        self.setWindowTitle("Picture preview")
-        self.resize(760, 560)
-
-        self.status_label = QLabel("Loading image...")
-        self.status_label.setWordWrap(True)
-        self.image_label = QLabel()
-        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter if hasattr(Qt, "AlignmentFlag") else Qt.AlignCenter)
-        self.image_label.setMinimumHeight(300)
-
-        open_btn = QPushButton("Open in Browser")
-        close_btn = QPushButton("Close")
-        open_btn.clicked.connect(self._open_in_browser)
-        close_btn.clicked.connect(self.accept)
-
-        btns = QHBoxLayout()
-        btns.addWidget(open_btn)
-        btns.addStretch(1)
-        btns.addWidget(close_btn)
-
-        main = QVBoxLayout()
-        main.addWidget(self.status_label)
-        main.addWidget(self.image_label, 1)
-        main.addLayout(btns)
-        self.setLayout(main)
-
-        self._load_picture()
-
-    def _open_in_browser(self):
-        try:
-            webbrowser.open(self._resolved_url(self.picture_url))
-        except Exception as e:
-            showWarning(f"Cannot open browser: {e}")
-
-    def _resolved_url(self, raw_url: Optional[str]) -> str:
-        url = (raw_url or "").strip()
-        if url.startswith("//"):
-            return "https:" + url
-        if url.startswith("/"):
-            if self.picture_referer:
-                ref = urlsplit(self.picture_referer)
-                if ref.scheme and ref.netloc:
-                    return f"{ref.scheme}://{ref.netloc}{url}"
-            return "https://dictionary.cambridge.org" + url
-        return url
-
-    def _load_picture(self):
-        def task():
-            import requests
-
-            errors: List[str] = []
-
-            def try_download(url: Optional[str], referer: Optional[str], label: str):
-                resolved = self._resolved_url(url)
-                if not resolved:
-                    return None
-                headers = {
-                    "User-Agent": USER_AGENT,
-                    "Accept": "image/*,*/*;q=0.8",
-                }
-                if referer:
-                    headers["Referer"] = referer
-                try:
-                    resp = requests.get(resolved, headers=headers, timeout=15)
-                    resp.raise_for_status()
-                except Exception as e:
-                    errors.append(f"{label}: {e}")
-                    return None
-                content_type = (resp.headers.get("Content-Type") or "").strip()
-                return resp.content, content_type, resolved
-
-            full = try_download(self.picture_url, self.picture_referer, "full")
-            if full:
-                content, content_type, resolved = full
-                return content, content_type, resolved, "full"
-
-            thumb = try_download(self.picture_thumb_url, None, "thumb")
-            if thumb:
-                content, content_type, resolved = thumb
-                return content, content_type, resolved, "thumb"
-
-            if self.picture_thumb_bytes:
-                return self.picture_thumb_bytes, "image/*", "thumbnail-bytes", "thumb-bytes"
-
-            msg = "; ".join(errors[:2]) if errors else "image download failed"
-            raise RuntimeError(msg)
-
-        def on_done(future):
-            try:
-                content, content_type, resolved_url, source_kind = future.result()
-            except Exception as e:
-                self.status_label.setText(f"Image load failed: {e}")
-                return
-
-            pix = QPixmap()
-            if not pix.loadFromData(content):
-                self.status_label.setText("Cannot decode image bytes.")
-                return
-
-            self._pixmap = pix
-            self._apply_scaled_pixmap()
-            size_kb = max(1, round(len(content) / 1024))
-            quality = self._quality_hint(pix.width(), pix.height())
-            ctype = content_type or "unknown"
-            prefix = ""
-            if source_kind != "full":
-                prefix = "Full image blocked/unavailable. Showing thumbnail.\n"
-            self.status_label.setText(
-                f"{prefix}{pix.width()}x{pix.height()} px, ~{size_kb} KB, {ctype}. {quality}\n{resolved_url}"
-            )
-
-        self._run_in_background(task, on_done)
-
-    def _run_in_background(self, task, on_done):
-        if hasattr(mw, "taskman"):
-            mw.taskman.run_in_background(task, on_done)
-            return
-        try:
-            value = task()
-            on_done(_InlineFuture(value=value))
-        except Exception as e:
-            on_done(_InlineFuture(exc=e))
-
-    def _apply_scaled_pixmap(self):
-        if not self._pixmap:
-            self.image_label.clear()
-            return
-        area = self.image_label.size()
-        if area.width() <= 0 or area.height() <= 0:
-            return
-        mode = Qt.AspectRatioMode.KeepAspectRatio if hasattr(Qt, "AspectRatioMode") else Qt.KeepAspectRatio
-        transform = Qt.TransformationMode.SmoothTransformation if hasattr(Qt, "TransformationMode") else Qt.SmoothTransformation
-        scaled = self._pixmap.scaled(area, mode, transform)
-        self.image_label.setPixmap(scaled)
-
-    def resizeEvent(self, event):  # type: ignore[override]
-        self._apply_scaled_pixmap()
-        super().resizeEvent(event)
-
-    def _quality_hint(self, width: int, height: int) -> str:
-        if width >= 1000 and height >= 700:
-            return "Quality: high."
-        if width >= 600 and height >= 400:
-            return "Quality: medium."
-        return "Quality: low, consider replacing."
-
-
-class _InlineFuture:
-    def __init__(self, value=None, exc: Optional[Exception] = None):
-        self._value = value
-        self._exc = exc
-
-    def result(self):
-        if self._exc:
-            raise self._exc
-        return self._value
-
-
-class SuggestionPickerDialog(QDialog):
-    def __init__(
-        self,
-        parent,
-        word: str,
-        candidates: List[str],
-        validate_word: Callable[[str], bool],
-        target_count: int,
-    ):
-        super().__init__(parent)
-        self.selected_word: Optional[str] = None
-        self._validate_word = validate_word
-        self._target_count = max(1, int(target_count))
-        self._total = len(candidates)
-        self._seen: set[str] = set()
-        self._executor: Optional[ThreadPoolExecutor] = None
-        self._future_to_word: Dict[Future, str] = {}
-        self._checked = 0
-        self._confirmed = 0
-        self._finished = False
-
-        self.setWindowTitle("Suggestions")
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"No exact match for '{word}'.\nChecking suggestions..."))
-        self.status_label = QLabel("Checking candidates...")
-        layout.addWidget(self.status_label)
-        self.lst = QListWidget()
-        layout.addWidget(self.lst)
-        btns = QHBoxLayout()
-        self.use_btn = QPushButton("Try selected")
-        close_btn = QPushButton("Close")
-        self.use_btn.setEnabled(False)
-        self.use_btn.clicked.connect(self._accept_selected)
-        close_btn.clicked.connect(self.reject)
-        self.lst.itemDoubleClicked.connect(lambda _: self._accept_selected())
-        self.lst.currentRowChanged.connect(lambda _: self.use_btn.setEnabled(self.lst.currentItem() is not None))
-        btns.addWidget(self.use_btn)
-        btns.addWidget(close_btn)
-        layout.addLayout(btns)
-        self.setLayout(layout)
-
-        max_workers = min(8, max(3, self._target_count))
-        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="typo-check")
-        for candidate in candidates:
-            future = self._executor.submit(self._safe_validate, candidate)
-            self._future_to_word[future] = candidate
-
-        self._timer = QTimer(self)
-        self._timer.setInterval(100)
-        self._timer.timeout.connect(self._poll_futures)
-        self._timer.start()
-        self._update_status()
-
-    def _safe_validate(self, candidate: str) -> bool:
-        try:
-            return bool(self._validate_word(candidate))
-        except Exception:
-            return False
-
-    def _poll_futures(self):
-        if self._finished:
-            return
-        done = [f for f in list(self._future_to_word.keys()) if f.done()]
-        if not done:
-            return
-        for future in done:
-            candidate = self._future_to_word.pop(future)
-            self._checked += 1
-            is_valid = False
-            try:
-                is_valid = bool(future.result())
-            except Exception:
-                is_valid = False
-            if is_valid:
-                key = candidate.casefold()
-                if key not in self._seen:
-                    self._seen.add(key)
-                    self.lst.addItem(candidate)
-                    self._confirmed += 1
-                    if self.lst.count() == 1:
-                        self.lst.setCurrentRow(0)
-        if self._confirmed >= self._target_count:
-            self._finish(cancel_pending=True)
-        elif not self._future_to_word:
-            self._finish(cancel_pending=False)
-        self._update_status()
-
-    def _update_status(self):
-        if self._finished:
-            if self._confirmed:
-                self.status_label.setText(f"Ready: {self._confirmed} valid suggestions.")
-            else:
-                self.status_label.setText("No valid suggestions found.")
-            return
-        self.status_label.setText(
-            f"Checking... {self._checked}/{self._total} | valid: {self._confirmed}"
-        )
-
-    def _accept_selected(self):
-        item = self.lst.currentItem()
-        if not item:
-            return
-        self.selected_word = item.text().strip()
-        if not self.selected_word:
-            return
-        self.accept()
-
-    def _finish(self, cancel_pending: bool):
-        if self._finished:
-            return
-        self._finished = True
-        if self._timer.isActive():
-            self._timer.stop()
-        self._shutdown_executor(cancel_pending=cancel_pending)
-
-    def _shutdown_executor(self, cancel_pending: bool):
-        if not self._executor:
-            return
-        try:
-            self._executor.shutdown(wait=False, cancel_futures=cancel_pending)
-        except TypeError:
-            self._executor.shutdown(wait=False)
-        self._executor = None
-
-    def closeEvent(self, event):  # type: ignore[override]
-        self._finish(cancel_pending=True)
-        super().closeEvent(event)
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+_MAX_FETCH_WORKERS = 4
+_MAX_TYPO_SUGGEST_WORKERS = 8
+_TYPO_CACHE_LIMIT = 80
+_POLL_INTERVAL_MS = 100
 
 
 class FetchDialog(QDialog):
@@ -563,11 +269,12 @@ class FetchDialog(QDialog):
         preview = sense.preview_text(self.cfg["max_examples"], self.cfg["max_synonyms"])
         return f"[{self._source_label(source_id)}] {preview}"
 
-    def _fetch_for_source(self, source_id: str, cfg_snapshot, word: str) -> List[Sense]:
+    # ---------- Fetch orchestration ----------
+    def _fetch_for_source(self, source_id: str, cfg_snapshot: Dict, word: str) -> List[Sense]:
         fetcher = get_fetcher_by_id(source_id, cfg_snapshot)
         return fetcher.fetch(word)
 
-    def _start_fetch(self, word: str, source_ids: List[str], cfg_snapshot):
+    def _start_fetch(self, word: str, source_ids: List[str], cfg_snapshot: Dict):
         self._abort_active_fetch(cancel_pending=True)
         self.senses = []
         self.sense_sources = []
@@ -584,7 +291,7 @@ class FetchDialog(QDialog):
             else:
                 self._set_source_status(source_id, "idle")
 
-        max_workers = min(4, max(1, len(source_ids)))
+        max_workers = min(_MAX_FETCH_WORKERS, max(1, len(source_ids)))
         self._fetch_executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="multi-fetch")
         for source_id in source_ids:
             try:
@@ -597,7 +304,7 @@ class FetchDialog(QDialog):
 
         if not self._fetch_timer:
             self._fetch_timer = QTimer(self)
-            self._fetch_timer.setInterval(100)
+            self._fetch_timer.setInterval(_POLL_INTERVAL_MS)
             self._fetch_timer.timeout.connect(self._poll_fetch_futures)
         if not self._fetch_future_to_source:
             self._finish_fetch()
@@ -669,6 +376,7 @@ class FetchDialog(QDialog):
                 return merged
         return base_map
 
+    # ---------- User actions ----------
     def on_fetch(self):
         self.cfg = get_config()
         word = self.word_edit.text().strip()
@@ -680,6 +388,7 @@ class FetchDialog(QDialog):
         cfg_snapshot = get_config()
         self._start_fetch(word, source_ids, cfg_snapshot)
 
+    # ---------- Typo suggestions ----------
     def _try_typo_suggestions(self, word: str, source_ids: List[str]) -> bool:
         logger.debug("Trying typo suggestions for '%s'", word)
         typo_cfg = self.cfg.get("typo_suggestions") if isinstance(self.cfg.get("typo_suggestions"), dict) else {}
@@ -701,7 +410,7 @@ class FetchDialog(QDialog):
         self.on_fetch()
         return True
 
-    def _collect_typo_suggestions(self, word: str, source_ids: List[str], cfg_snapshot, max_results: int) -> List[str]:
+    def _collect_typo_suggestions(self, word: str, source_ids: List[str], cfg_snapshot: Dict, max_results: int) -> List[str]:
         source_key = ",".join(source_ids)
         cache_key = (source_key, word.casefold(), max_results)
         cached = self._typo_cache.get(cache_key)
@@ -729,7 +438,7 @@ class FetchDialog(QDialog):
             if query.casefold() != word.casefold():
                 add_candidate(query)
 
-        max_workers = min(8, max(1, len(queries) * len(source_ids)))
+        max_workers = min(_MAX_TYPO_SUGGEST_WORKERS, max(1, len(queries) * len(source_ids)))
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="typo-suggest") as pool:
             future_to_source: Dict[Future, str] = {}
             for source_id in source_ids:
@@ -753,7 +462,7 @@ class FetchDialog(QDialog):
         ranked_limit = max(max_results * 4, max_results + 12)
         ranked = rank_suggestions(word, candidates, ranked_limit)
         self._typo_cache[cache_key] = ranked
-        if len(self._typo_cache) > 80:
+        if len(self._typo_cache) > _TYPO_CACHE_LIMIT:
             try:
                 oldest = next(iter(self._typo_cache))
                 del self._typo_cache[oldest]
@@ -761,7 +470,7 @@ class FetchDialog(QDialog):
                 self._typo_cache.clear()
         return ranked[:]
 
-    def _suggest_for_query(self, source_id: str, cfg_snapshot, query: str, fetch_limit: int) -> List[str]:
+    def _suggest_for_query(self, source_id: str, cfg_snapshot: Dict, query: str, fetch_limit: int) -> List[str]:
         fetcher = get_fetcher_by_id(source_id, cfg_snapshot)
         return fetcher.suggest(query, limit=fetch_limit)
 
@@ -771,7 +480,7 @@ class FetchDialog(QDialog):
         suggestions: List[str],
         max_results: int,
         source_ids: List[str],
-        cfg_snapshot,
+        cfg_snapshot: Dict,
     ) -> Optional[str]:
 
         def validate(candidate: str) -> bool:
@@ -795,6 +504,7 @@ class FetchDialog(QDialog):
             return None
         return dlg.selected_word
 
+    # ---------- Sense selection / preview ----------
     def on_select(self, row: int):
         if row < 0 or row >= len(self.senses):
             self.preview.clear()
@@ -826,6 +536,7 @@ class FetchDialog(QDialog):
         self.preview_image_btn.setEnabled(has_picture)
         self.clear_image_btn.setEnabled(has_picture)
 
+    # ---------- Image ----------
     def on_find_image(self):
         row = self.sense_list.currentRow()
         if row < 0 or row >= len(self.senses):
@@ -876,6 +587,7 @@ class FetchDialog(QDialog):
         sense.picture_thumb_bytes = None
         self._refresh_sense_item(row)
 
+    # ---------- Insert note ----------
     def on_insert(self, open_editor: bool = False):
         row = self.sense_list.currentRow()
         if row < 0 or row >= len(self.senses):
@@ -885,7 +597,6 @@ class FetchDialog(QDialog):
         logger.info("Inserting sense #%d: '%s' (editor=%s)", row, sense.definition[:60], open_editor)
         col = mw.col
 
-        # resolve model & deck from user choices
         model_name = self.ntype_combo.currentText()
         model = col.models.byName(model_name)
         deck_name = self.deck_combo.currentText()
@@ -893,16 +604,42 @@ class FetchDialog(QDialog):
         col.decks.select(deck_id)
         col.models.setCurrent(model)
 
-        if hasattr(col, "new_note"):
-            note = col.new_note(model)
-        else:
-            # Legacy API: newNote uses current model unless forDeck=True
-            try:
-                note = col.newNote(False)
-            except TypeError:
-                note = col.newNote()
+        note = self._create_note(col, model)
         source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
         fmap: Dict[str, List[str]] = self._resolve_field_map(source_id)
+
+        self._populate_fields(note, sense, fmap)
+        self._download_and_set_media(note, sense, fmap)
+
+        # ensure deck id set on note for older API
+        try:
+            note.model()["did"] = deck_id
+        except Exception:
+            pass
+
+        self._add_note_to_col(col, note, deck_id)
+
+        if self.cfg.get("remember_last", True):
+            source_ids = self._selected_source_ids()
+            save_config({"note_type": model["name"], "deck": deck_name, "sources": source_ids})
+        mw.reset()
+        logger.info("Note added (model=%s, deck=%s)", model_name, deck_name)
+        tooltip("Note added.", parent=self)
+        if open_editor:
+            self._open_browser(note.id)
+        self.accept()
+
+    def _create_note(self, col, model):
+        """Create a new Anki note, handling legacy API variants."""
+        if hasattr(col, "new_note"):
+            return col.new_note(model)
+        try:
+            return col.newNote(False)
+        except TypeError:
+            return col.newNote()
+
+    def _populate_fields(self, note, sense: Sense, fmap: Dict[str, List[str]]):
+        """Map sense data into note fields according to *fmap*."""
 
         def set_field(key: str, value: str):
             names = fmap.get(key) or []
@@ -927,6 +664,22 @@ class FetchDialog(QDialog):
         set_field("examples", "<br>".join(numbered))
         set_field("synonyms", ", ".join(sense.synonyms[: self.cfg["max_synonyms"]]))
 
+    def _download_and_set_media(self, note, sense: Sense, fmap: Dict[str, List[str]]):
+        """Download audio/picture and write the corresponding field tags."""
+
+        def set_field(key: str, value: str):
+            names = fmap.get(key) or []
+            if isinstance(names, str):
+                names = [n.strip() for n in names.split(",") if n.strip()]
+            for name in names:
+                if name in note:
+                    if not value:
+                        continue
+                    if note[name]:
+                        note[name] = f"{note[name]}<br>{value}"
+                    else:
+                        note[name] = value
+
         # audio
         audio_tag = ""
         audio_url = self._choose_audio(sense.audio_urls)
@@ -944,18 +697,15 @@ class FetchDialog(QDialog):
         if sense.picture_url:
             try:
                 fname, _ = download_to_media(sense.picture_url, referer=sense.picture_referer)
-                pic_tag = f'<img src=\"{fname}\">'
+                pic_tag = f'<img src="{fname}">'
             except Exception as e:
                 logger.error("Image download failed: %s (url=%s)", e, sense.picture_url)
                 showWarning(f"Image download failed: {e}")
         set_field("picture", pic_tag)
 
-        # ensure deck id set on note for older API
-        try:
-            note.model()["did"] = deck_id
-        except Exception:
-            pass
-
+    @staticmethod
+    def _add_note_to_col(col, note, deck_id):
+        """Add note via the appropriate Anki API (handles version differences)."""
         added = False
         if hasattr(col, "add_note"):
             try:
@@ -970,21 +720,10 @@ class FetchDialog(QDialog):
         if not added:
             try:
                 col.addNote(note, deck_id)
-                added = True
             except TypeError:
                 col.addNote(note)
-                added = True
 
-        if self.cfg.get("remember_last", True):
-            source_ids = self._selected_source_ids()
-            save_config({"note_type": model["name"], "deck": deck_name, "sources": source_ids})
-        mw.reset()
-        logger.info("Note added (model=%s, deck=%s)", model_name, deck_name)
-        tooltip("Note added.", parent=self)
-        if open_editor:
-            self._open_browser(note.id)
-        self.accept()
-
+    # ---------- Dialect helpers ----------
     def _choose_audio(self, audio_map: Dict[str, str]) -> Optional[str]:
         return self._choose_by_dialect(audio_map)
 
@@ -1027,7 +766,7 @@ class FetchDialog(QDialog):
                     browser.search()
             browser.activateWindow()
         except Exception:
-            traceback.print_exc()
+            logger.exception("Failed to open browser for note %d", nid)
 
     def closeEvent(self, event):  # type: ignore[override]
         self._abort_active_fetch(cancel_pending=True)

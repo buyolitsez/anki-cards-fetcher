@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import traceback
 from typing import List, Optional
 
-from aqt import mw
 from aqt.qt import (
     QAbstractItemView,
     QDialog,
@@ -24,6 +22,7 @@ from aqt.utils import showWarning, tooltip
 
 from ..config import get_config, save_config
 from ..logger import get_logger
+from .background import run_in_background
 from ..image_search import (
     DEFAULT_IMAGE_PROVIDER,
     ImageResult,
@@ -173,9 +172,8 @@ class ImageSearchDialog(QDialog):
                 results, used_provider, safe = future.result()
             except Exception as e:
                 self._set_busy(False, "")
-                logger.error("Image search failed: %s", e)
+                logger.exception("Image search failed")
                 showWarning(f"Image search failed: {e}")
-                traceback.print_exc()
                 return
             self.last_query = query
             self.last_provider = used_provider
@@ -228,8 +226,8 @@ class ImageSearchDialog(QDialog):
                 results = future.result()
             except Exception as e:
                 self._set_busy(False, "")
+                logger.exception("Load more failed")
                 showWarning(f"Load more failed: {e}")
-                traceback.print_exc()
                 return
             self._set_busy(False, f"Loaded {len(results)} more.")
             self._append_results(results)
@@ -245,15 +243,7 @@ class ImageSearchDialog(QDialog):
         self._enqueue_thumbnails(self.results, reset=True)
 
     def _run_in_background(self, task, on_done):
-        if hasattr(mw, "taskman"):
-            mw.taskman.run_in_background(task, on_done)
-            return
-        # fallback: run synchronously (older Anki)
-        try:
-            res = task()
-            on_done(_DummyFuture(res, None))
-        except Exception as e:
-            on_done(_DummyFuture(None, e))
+        run_in_background(task, on_done)
 
     def _show_results(self, results: List[ImageResult]):
         self.results = []
@@ -388,12 +378,3 @@ class ImageSearchDialog(QDialog):
             self._run_in_background(task, on_done)
 
 
-class _DummyFuture:
-    def __init__(self, value, exc: Optional[Exception]):
-        self._value = value
-        self._exc = exc
-
-    def result(self):
-        if self._exc:
-            raise self._exc
-        return self._value

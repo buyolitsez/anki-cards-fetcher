@@ -7,6 +7,7 @@ import pytest
 bs4 = pytest.importorskip("bs4")
 
 import cambridge_fetch.fetchers.cambridge as cambridge_mod
+from cambridge_fetch.exceptions import FetchError
 
 
 def _patch_requests(monkeypatch, html: str):
@@ -18,7 +19,8 @@ def _patch_requests(monkeypatch, html: str):
     def _fake_get(*_args, **_kwargs):
         return _Resp(html)
 
-    monkeypatch.setattr(cambridge_mod, "requests", types.SimpleNamespace(get=_fake_get))
+    fake_requests = types.SimpleNamespace(get=_fake_get)
+    monkeypatch.setattr(cambridge_mod, "require_requests", lambda: fake_requests)
 
 
 def _make_fetcher():
@@ -127,7 +129,8 @@ def test_cambridge_fetch_uses_amp_when_base_times_out(monkeypatch):
             raise TimeoutError("read timed out")
         return _Resp(amp_html)
 
-    monkeypatch.setattr(cambridge_mod, "requests", types.SimpleNamespace(get=_fake_get))
+    fake_requests = types.SimpleNamespace(get=_fake_get)
+    monkeypatch.setattr(cambridge_mod, "require_requests", lambda: fake_requests)
     fetcher = _make_fetcher()
     senses = fetcher.fetch("fence")
     assert senses
@@ -138,9 +141,10 @@ def test_cambridge_fetch_raises_clear_timeout_when_all_requests_fail(monkeypatch
     def _fake_get(*_args, **_kwargs):
         raise TimeoutError("read timed out")
 
-    monkeypatch.setattr(cambridge_mod, "requests", types.SimpleNamespace(get=_fake_get))
+    fake_requests = types.SimpleNamespace(get=_fake_get)
+    monkeypatch.setattr(cambridge_mod, "require_requests", lambda: fake_requests)
     fetcher = _make_fetcher()
-    with pytest.raises(RuntimeError, match="Cambridge request timed out"):
+    with pytest.raises(FetchError, match="Cambridge request timed out"):
         fetcher.fetch("fence")
 
 
@@ -154,7 +158,8 @@ def test_cambridge_fetch_raises_cloudflare_block_message(monkeypatch):
     def _fake_get(*_args, **_kwargs):
         return _Resp()
 
-    monkeypatch.setattr(cambridge_mod, "requests", types.SimpleNamespace(get=_fake_get))
+    fake_requests = types.SimpleNamespace(get=_fake_get)
+    monkeypatch.setattr(cambridge_mod, "require_requests", lambda: fake_requests)
     fetcher = _make_fetcher()
-    with pytest.raises(RuntimeError, match="Cloudflare challenge"):
+    with pytest.raises(FetchError, match="Cloudflare challenge"):
         fetcher.fetch("fence")

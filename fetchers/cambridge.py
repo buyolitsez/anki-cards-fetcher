@@ -4,23 +4,17 @@ import re
 from typing import Dict, List, Optional
 from urllib.parse import quote
 
-try:
-    import requests
-except Exception:  # pragma: no cover - runtime guard
-    requests = None  # type: ignore
-
-try:
-    from bs4 import BeautifulSoup  # type: ignore
-except Exception:
-    BeautifulSoup = None  # type: ignore
-
 from ..config import DEFAULT_CONFIG
+from ..exceptions import FetchError, MissingDependencyError
+from ..http_client import USER_AGENT, require_bs4, require_requests
 from ..logger import get_logger
-from ..media import USER_AGENT
 from ..models import Sense
 from .base import BaseFetcher
 
 logger = get_logger(__name__)
+
+_REQUEST_TIMEOUT = (4, 12)
+_SUGGEST_TIMEOUT = 15
 
 
 class CambridgeFetcher(BaseFetcher):
@@ -29,7 +23,6 @@ class CambridgeFetcher(BaseFetcher):
     BASE = "https://dictionary.cambridge.org/dictionary/english/{word}"
     AMP_BASE = "https://dictionary.cambridge.org/amp/english/{word}"
     SPELLCHECK_BASE = "https://dictionary.cambridge.org/spellcheck/english/?q={word}"
-    REQUEST_TIMEOUT = (4, 12)
     _last_soup = None
 
     def __init__(self, cfg):
@@ -38,10 +31,8 @@ class CambridgeFetcher(BaseFetcher):
 
     def fetch(self, word: str) -> List[Sense]:
         logger.info("Cambridge: fetching '%s'", word)
-        if not requests:
-            raise RuntimeError("requests module not found. Install requests in the Anki environment.")
-        if not BeautifulSoup:
-            raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
+        require_requests()
+        require_bs4()
 
         senses: List[Sense] = []
         base_error: Optional[Exception] = None
@@ -67,7 +58,6 @@ class CambridgeFetcher(BaseFetcher):
             logger.debug("Cambridge: no audio in base senses, trying AMP for audio")
             amp_senses = self._parse_page(self.AMP_BASE, word)
             if amp_senses:
-                # Copy audio/picture from AMP data when available
                 for i, s in enumerate(senses):
                     if i < len(amp_senses):
                         if amp_senses[i].audio_urls:
@@ -75,9 +65,9 @@ class CambridgeFetcher(BaseFetcher):
                         if amp_senses[i].picture_url:
                             s.picture_url = amp_senses[i].picture_url
                             s.picture_referer = amp_senses[i].picture_referer or "https://dictionary.cambridge.org/"
-        # If audio is still missing, do a page-wide fallback search (pronunciation buttons)
+        # If audio is still missing, do a page-wide fallback search
         if senses and all(not s.audio_urls for s in senses):
-            soup = self._last_soup  # populated in _parse_page
+            soup = self._last_soup
             if soup:
                 global_audio = self._parse_audio(soup)
                 if global_audio:
@@ -88,8 +78,8 @@ class CambridgeFetcher(BaseFetcher):
         return senses
 
     def suggest(self, word: str, limit: int = 8) -> List[str]:
-        if not requests or not BeautifulSoup:
-            return []
+        requests = require_requests()
+        BeautifulSoup = require_bs4()
         query = word.strip()
         if not query:
             return []
@@ -98,11 +88,8 @@ class CambridgeFetcher(BaseFetcher):
         try:
             resp = requests.get(
                 url,
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Accept-Language": "en-US,en;q=0.9",
-                },
-                timeout=15,
+                headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+                timeout=_SUGGEST_TIMEOUT,
             )
         except Exception:
             logger.debug("Cambridge: spellcheck request failed for '%s'", query)
@@ -113,16 +100,15 @@ class CambridgeFetcher(BaseFetcher):
         return self._parse_spellcheck_suggestions(resp.text, query, limit)
 
     def _parse_page(self, base_url: str, word: str) -> List[Sense]:
+        requests = require_requests()
+        BeautifulSoup = require_bs4()
         url = base_url.format(word=word.strip().replace(" ", "-"))
         logger.debug("Cambridge: requesting %s", url)
         try:
             resp = requests.get(
                 url,
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Accept-Language": "en-US,en;q=0.9",
-                },
-                timeout=self.REQUEST_TIMEOUT,
+                headers={"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"},
+                timeout=_REQUEST_TIMEOUT,
             )
         except Exception as e:
             cls_name = e.__class__.__name__.lower()
@@ -130,18 +116,18 @@ class CambridgeFetcher(BaseFetcher):
             is_timeout = "timeout" in cls_name or "timed out" in msg.lower() or "timeout" in msg.lower()
             if is_timeout:
                 logger.error("Cambridge: request timed out for '%s'", word)
-                raise RuntimeError(f"Cambridge request timed out for '{word}'.")
+                raise FetchError(f"Cambridge request timed out for '{word}'.") from e
             reason = msg or e.__class__.__name__
             logger.error("Cambridge: request failed for '%s': %s", word, reason)
-            raise RuntimeError(f"Cambridge request failed for '{word}': {reason}")
+            raise FetchError(f"Cambridge request failed for '{word}': {reason}") from e
         if self._is_cloudflare_challenge(resp):
             logger.error("Cambridge: Cloudflare challenge detected for '%s'", word)
-            raise RuntimeError(
+            raise FetchError(
                 "Cambridge is temporarily blocking automated requests (Cloudflare challenge). "
                 "Try again later or use another source."
             )
         if resp.status_code >= 400:
-            raise RuntimeError(f"Cambridge returned {resp.status_code} for '{word}'.")
+            raise FetchError(f"Cambridge returned {resp.status_code} for '{word}'.")
 
         soup = BeautifulSoup(resp.text, "html.parser")
         self._last_soup = soup
@@ -204,7 +190,6 @@ class CambridgeFetcher(BaseFetcher):
         return "just a moment" in text_l and "cf-chl" in text_l
 
     def _parse_entry_examples(self, entry) -> List[str]:
-        """Fallback: examples listed in accordion 'Examples' section for the entry."""
         examples: List[str] = []
         for section in entry.select(".daccord section"):
             header = section.select_one(".daccord_h, header")
@@ -220,6 +205,7 @@ class CambridgeFetcher(BaseFetcher):
         return examples
 
     def _parse_spellcheck_suggestions(self, html: str, query: str, limit: int) -> List[str]:
+        BeautifulSoup = require_bs4()
         soup = BeautifulSoup(html, "html.parser")
         out: List[str] = []
         seen: set[str] = set()
@@ -233,14 +219,7 @@ class CambridgeFetcher(BaseFetcher):
                 break
         return out
 
-    def _append_suggestion(
-        self,
-        out: List[str],
-        seen: set[str],
-        suggestion: str,
-        query: str,
-        limit: int,
-    ) -> None:
+    def _append_suggestion(self, out: List[str], seen: set[str], suggestion: str, query: str, limit: int) -> None:
         if not suggestion:
             return
         key = suggestion.casefold()
@@ -254,23 +233,15 @@ class CambridgeFetcher(BaseFetcher):
     def _parse_examples(self, block) -> List[str]:
         examples: List[str] = []
         selectors = [
-            ".eg",
-            ".deg",
-            ".examp",
-            ".dexamp",
-            "span.eg",
-            "span.deg",
-            "span.xref span.eg",
-            ".example",
-            ".dexample",
-            "li.example",
+            ".eg", ".deg", ".examp", ".dexamp",
+            "span.eg", "span.deg", "span.xref span.eg",
+            ".example", ".dexample", "li.example",
         ]
         for sel in selectors:
             for ex in block.select(sel):
                 text = self._text(ex)
                 if text and text not in examples:
                     examples.append(text)
-        # broader fallback: any element whose class contains eg/example/examp
         if not examples:
             for ex in block.select("[class]"):
                 classes = " ".join(ex.get("class", []))
@@ -287,15 +258,12 @@ class CambridgeFetcher(BaseFetcher):
 
     def _parse_audio(self, entry) -> Dict[str, str]:
         audio: Dict[str, str] = {}
-        # Cambridge layout changes often; collect links from multiple patterns.
         candidates = []
         candidates.extend(entry.select("[data-src-mp3], [data-src-ogg]"))
         candidates.extend(entry.select("source[src], audio[src], audio source[src]"))
         candidates.extend(entry.select("a[href*='/media/']"))
         candidates.extend(entry.select("button[data-src-mp3], button[data-src-ogg]"))
         candidates.extend(entry.select("span[data-src-mp3], span[data-src-ogg]"))
-
-        # AMP pages use <amp-audio><source src=...>
         candidates.extend(entry.select("amp-audio source[src]"))
 
         for tag in candidates:
@@ -314,12 +282,10 @@ class CambridgeFetcher(BaseFetcher):
             if not plausible:
                 continue
             region_key = self._find_region(tag)
-            # Keep first candidate per region; use "default" when region is unknown
             key = region_key or "default"
             if key not in audio:
                 audio[key] = url
 
-        # Fallback: first available data-src-mp3
         if not audio:
             src = entry.select_one("[data-src-mp3]")
             if src:
@@ -330,7 +296,6 @@ class CambridgeFetcher(BaseFetcher):
 
     def _parse_ipa(self, entry) -> Dict[str, str]:
         ipa: Dict[str, str] = {}
-        # Primary: pronunciation blocks by region (uk/us)
         for block in entry.select(".dpron-i"):
             region_key = self._find_region(block)
             ipa_node = block.select_one(".ipa, .dipa")
@@ -348,7 +313,6 @@ class CambridgeFetcher(BaseFetcher):
             key = region_key or "default"
             if key not in ipa:
                 ipa[key] = text
-        # Fallback: any ipa node in the entry
         if not ipa:
             for ipa_node in entry.select(".ipa, .dipa"):
                 text = self._text(ipa_node)
@@ -366,7 +330,6 @@ class CambridgeFetcher(BaseFetcher):
         return ipa
 
     def _find_region(self, tag) -> Optional[str]:
-        """Try to detect region (us/uk) from nearby .region nodes or classes."""
         parent = tag
         for _ in range(5):
             region_el = parent.select_one(".region, .dregion") if hasattr(parent, "select_one") else None
@@ -387,16 +350,13 @@ class CambridgeFetcher(BaseFetcher):
         return None
 
     def _parse_picture(self, entry) -> Optional[str]:
-        # Cambridge may keep images in img[data-src] or img[src] with /media/ paths
         for img in entry.select("img, source, picture source"):
             src = img.get("data-src") or img.get("srcset") or img.get("src")
             if not src:
                 continue
-            # srcset may contain multiple comma-separated links; use the first one
             src = src.split(",")[0].split()[0]
             if any(ext in src.lower() for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp")) and "/media/" in src:
                 return src
-        # amp-img fallback
         amp = entry.select_one("amp-img")
         if amp:
             src = amp.get("data-src") or amp.get("src")

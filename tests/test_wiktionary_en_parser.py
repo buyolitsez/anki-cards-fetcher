@@ -32,7 +32,7 @@ def test_wiktionary_en_basic_parse():
     """
     soup = BeautifulSoup(html, "html.parser")
     fetcher = EnglishWiktionaryFetcher({})
-    lang = fetcher._language_headline(soup, "English")
+    lang = fetcher._find_language_section(soup)
     assert lang is not None
 
     senses = fetcher._parse_senses(lang)

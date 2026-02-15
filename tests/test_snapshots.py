@@ -38,7 +38,8 @@ def _patch_requests(monkeypatch, html: str):
     def _fake_get(*_args, **_kwargs):
         return _Resp(html)
 
-    monkeypatch.setattr(cambridge_mod, "requests", types.SimpleNamespace(get=_fake_get))
+    fake_requests = types.SimpleNamespace(get=_fake_get)
+    monkeypatch.setattr(cambridge_mod, "require_requests", lambda: fake_requests)
 
 
 def _norm(text: str) -> str:
@@ -75,7 +76,7 @@ def test_snapshot_wiktionary_omut_syllables():
     html = _load("wiktionary_omut.html")
     soup = BeautifulSoup(html, "html.parser")
     fetcher = wiktionary_mod.WiktionaryFetcher({})
-    lang = fetcher._language_section(soup, "Русский")
+    lang = fetcher._find_language_section(soup)
     assert lang is not None, "language section missing"
     assert fetcher._extract_syllables(lang) == GOLDEN["wiktionary_omut_syllables"]
 
@@ -84,6 +85,6 @@ def test_snapshot_wiktionary_test_syllables():
     html = _load("wiktionary_test.html")
     soup = BeautifulSoup(html, "html.parser")
     fetcher = wiktionary_mod.WiktionaryFetcher({})
-    lang = fetcher._language_section(soup, "Русский")
+    lang = fetcher._find_language_section(soup)
     assert lang is not None, "language section missing"
     assert fetcher._extract_syllables(lang) == GOLDEN["wiktionary_test_syllables"]

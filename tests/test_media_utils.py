@@ -5,17 +5,13 @@ import types
 import pytest
 
 import cambridge_fetch.media as media_mod
-from cambridge_fetch.media import _derive_media_name, _ext_from_content_type, _requests
+from cambridge_fetch.media import _derive_media_name, _ext_from_content_type
+from cambridge_fetch.exceptions import MediaDownloadError, MissingDependencyError
 
 
 def test_ext_from_content_type_known_and_unknown():
     assert _ext_from_content_type("image/jpeg; charset=utf-8") == ".jpg"
     assert _ext_from_content_type("application/json") == ""
-
-
-def test_requests_loader_handles_import_error(monkeypatch):
-    monkeypatch.setattr(media_mod.importlib, "import_module", lambda _name: (_ for _ in ()).throw(ImportError("x")))
-    assert _requests() is None
 
 
 def test_derive_media_name_decodes_percent_escapes():
@@ -72,7 +68,7 @@ def test_download_to_media_success_with_protocol_relative_url(monkeypatch):
     fake_mw = types.SimpleNamespace(col=types.SimpleNamespace(media=fake_media))
 
     monkeypatch.setattr(media_mod, "mw", fake_mw)
-    monkeypatch.setattr(media_mod, "_requests", lambda: _Requests())
+    monkeypatch.setattr(media_mod, "require_requests", lambda: _Requests())
 
     filename, path = media_mod.download_to_media("//cdn.example.com/img/pic.jpg")
 
@@ -108,7 +104,7 @@ def test_download_to_media_relative_url_and_referer_disabled(monkeypatch):
     fake_mw = types.SimpleNamespace(col=types.SimpleNamespace(media=fake_media))
 
     monkeypatch.setattr(media_mod, "mw", fake_mw)
-    monkeypatch.setattr(media_mod, "_requests", lambda: _Requests())
+    monkeypatch.setattr(media_mod, "require_requests", lambda: _Requests())
 
     filename, path = media_mod.download_to_media("/media/audio.mp3", referer=None)
 
@@ -138,13 +134,16 @@ def test_download_to_media_rejects_non_media_content(monkeypatch):
     fake_mw = types.SimpleNamespace(col=types.SimpleNamespace(media=fake_media))
 
     monkeypatch.setattr(media_mod, "mw", fake_mw)
-    monkeypatch.setattr(media_mod, "_requests", lambda: _Requests())
+    monkeypatch.setattr(media_mod, "require_requests", lambda: _Requests())
 
-    with pytest.raises(RuntimeError, match="Expected audio/image file"):
+    with pytest.raises(MediaDownloadError, match="Expected audio/image file"):
         media_mod.download_to_media("https://example.com/index.html")
 
 
 def test_download_to_media_requires_requests_module(monkeypatch):
-    monkeypatch.setattr(media_mod, "_requests", lambda: None)
-    with pytest.raises(RuntimeError, match="requests module not found"):
+    def raise_missing():
+        raise MissingDependencyError("requests module not found")
+
+    monkeypatch.setattr(media_mod, "require_requests", raise_missing)
+    with pytest.raises(MissingDependencyError, match="requests module not found"):
         media_mod.download_to_media("https://example.com/file.mp3")

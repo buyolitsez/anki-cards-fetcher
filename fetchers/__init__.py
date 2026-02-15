@@ -7,6 +7,16 @@ from .cambridge import CambridgeFetcher
 from .wiktionary import WiktionaryFetcher
 from .wiktionary_en import EnglishWiktionaryFetcher
 
+__all__ = [
+    "BaseFetcher",
+    "CambridgeFetcher",
+    "WiktionaryFetcher",
+    "EnglishWiktionaryFetcher",
+    "REGISTER",
+    "get_fetchers",
+    "get_fetcher_by_id",
+]
+
 # Registry of available sources
 REGISTER: Dict[str, Type[BaseFetcher]] = {
     CambridgeFetcher.ID: CambridgeFetcher,

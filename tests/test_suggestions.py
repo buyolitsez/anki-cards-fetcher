@@ -9,6 +9,7 @@ bs4 = pytest.importorskip("bs4")
 import cambridge_fetch.fetchers.cambridge as cambridge_mod
 import cambridge_fetch.fetchers.wiktionary as wiktionary_mod
 import cambridge_fetch.fetchers.wiktionary_en as wiktionary_en_mod
+import cambridge_fetch.fetchers.wiktionary_common as wiktionary_common_mod
 
 
 def test_cambridge_spellcheck_parser():
@@ -42,7 +43,8 @@ def test_wiktionary_ru_suggest_uses_opensearch(monkeypatch):
         calls["params"] = kwargs.get("params") or {}
         return _Resp()
 
-    monkeypatch.setattr(wiktionary_mod, "requests", types.SimpleNamespace(get=_fake_get))
+    fake_requests = types.SimpleNamespace(get=_fake_get)
+    monkeypatch.setattr(wiktionary_common_mod, "require_requests", lambda: fake_requests)
     fetcher = wiktionary_mod.WiktionaryFetcher({})
     out = fetcher.suggest("тсет", limit=5)
     assert out == ["тест", "тесто"]
@@ -65,7 +67,8 @@ def test_wiktionary_en_suggest_uses_opensearch(monkeypatch):
         calls["params"] = kwargs.get("params") or {}
         return _Resp()
 
-    monkeypatch.setattr(wiktionary_en_mod, "requests", types.SimpleNamespace(get=_fake_get))
+    fake_requests = types.SimpleNamespace(get=_fake_get)
+    monkeypatch.setattr(wiktionary_common_mod, "require_requests", lambda: fake_requests)
     fetcher = wiktionary_en_mod.EnglishWiktionaryFetcher({})
     out = fetcher.suggest("huose", limit=5)
     assert out == ["house", "houser"]
