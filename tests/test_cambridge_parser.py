@@ -142,3 +142,19 @@ def test_cambridge_fetch_raises_clear_timeout_when_all_requests_fail(monkeypatch
     fetcher = _make_fetcher()
     with pytest.raises(RuntimeError, match="Cambridge request timed out"):
         fetcher.fetch("fence")
+
+
+def test_cambridge_fetch_raises_cloudflare_block_message(monkeypatch):
+    class _Resp:
+        def __init__(self):
+            self.status_code = 403
+            self.text = "<html><title>Just a moment...</title><!-- cf-chl --></html>"
+            self.headers = {"server": "cloudflare"}
+
+    def _fake_get(*_args, **_kwargs):
+        return _Resp()
+
+    monkeypatch.setattr(cambridge_mod, "requests", types.SimpleNamespace(get=_fake_get))
+    fetcher = _make_fetcher()
+    with pytest.raises(RuntimeError, match="Cloudflare challenge"):
+        fetcher.fetch("fence")

@@ -119,6 +119,11 @@ class CambridgeFetcher(BaseFetcher):
                 raise RuntimeError(f"Cambridge request timed out for '{word}'.")
             reason = msg or e.__class__.__name__
             raise RuntimeError(f"Cambridge request failed for '{word}': {reason}")
+        if self._is_cloudflare_challenge(resp):
+            raise RuntimeError(
+                "Cambridge is temporarily blocking automated requests (Cloudflare challenge). "
+                "Try again later or use another source."
+            )
         if resp.status_code >= 400:
             raise RuntimeError(f"Cambridge returned {resp.status_code} for '{word}'.")
 
@@ -167,6 +172,20 @@ class CambridgeFetcher(BaseFetcher):
                         )
                     )
         return senses
+
+    def _is_cloudflare_challenge(self, resp) -> bool:
+        if not resp:
+            return False
+        status = int(getattr(resp, "status_code", 0) or 0)
+        if status != 403:
+            return False
+        server = (getattr(resp, "headers", {}) or {}).get("server", "")
+        text = getattr(resp, "text", "") or ""
+        server_l = str(server).lower()
+        text_l = text.lower()
+        if "cloudflare" in server_l:
+            return True
+        return "just a moment" in text_l and "cf-chl" in text_l
 
     def _parse_entry_examples(self, entry) -> List[str]:
         """Fallback: examples listed in accordion 'Examples' section for the entry."""
