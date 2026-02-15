@@ -7,6 +7,10 @@ from urllib.parse import unquote, urlsplit
 
 from aqt import mw
 
+from .logger import get_logger
+
+logger = get_logger(__name__)
+
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -64,6 +68,7 @@ def download_to_media(url: str, referer: Optional[str] = "https://dictionary.cam
 
     Also validates content-type to avoid saving HTML/captcha pages as audio/images.
     """
+    logger.info("Downloading media: %s", url)
     requests = _requests()
     if not requests:
         raise RuntimeError("requests module not found. Install requests in the Anki environment.")
@@ -83,10 +88,12 @@ def download_to_media(url: str, referer: Optional[str] = "https://dictionary.cam
     is_audio = ctype.startswith("audio/") or url.lower().endswith((".mp3", ".wav", ".ogg"))
     is_image = ctype.startswith("image/") or url.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
     if not (is_audio or is_image or ctype == "application/octet-stream"):
+        logger.error("Unexpected content-type '%s' for URL: %s", ctype, url)
         raise RuntimeError(f"Expected audio/image file, got {ctype or 'unknown'}")
     # derive filename
     name = _derive_media_name(url, ctype)
     # avoid collisions
     filename = mw.col.media.writeData(name, resp.content)
     path = mw.col.media.dir() + "/" + filename
+    logger.debug("Media saved as '%s' (%d bytes)", filename, len(resp.content))
     return filename, path

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import List
 
+from ..logger import get_logger
 from ..models import Sense
+
+logger = get_logger(__name__)
 
 
 class BaseFetcher:
@@ -11,6 +14,7 @@ class BaseFetcher:
 
     def __init__(self, cfg):
         self.cfg = cfg
+        logger.debug("Initialized fetcher %s (%s)", self.ID, self.LABEL)
 
     def fetch(self, word: str) -> List[Sense]:  # pragma: no cover - interface
         raise NotImplementedError

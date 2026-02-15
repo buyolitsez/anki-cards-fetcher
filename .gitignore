@@ -33,6 +33,7 @@ Thumbs.db
 .vscode/
 
 # Runtime logs / local state (Anki add-on folder)
+logs/
 *.log
 
 # Anki generates this per-user in the add-ons folder.

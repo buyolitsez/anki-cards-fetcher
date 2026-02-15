@@ -18,7 +18,10 @@ from aqt.utils import tooltip
 from ..config import DEFAULT_CONFIG, get_config, save_config
 from ..fetchers import get_fetchers
 from ..image_search import DEFAULT_IMAGE_PROVIDER, get_image_provider_choices
+from ..logger import get_logger
 from .source_utils import configured_source_ids, ensure_source_selection
+
+logger = get_logger(__name__)
 
 
 class SettingsDialog(QDialog):
@@ -114,6 +117,16 @@ class SettingsDialog(QDialog):
             idx = self.suggest_max.findData(typo_max)
         self.suggest_max.setCurrentIndex(idx)
 
+        # log level
+        self.log_level_combo = QComboBox()
+        for level in ("WARNING", "INFO", "DEBUG", "ERROR", "CRITICAL"):
+            self.log_level_combo.addItem(level, level)
+        current_level = (self.cfg.get("log_level") or "WARNING").upper()
+        idx = self.log_level_combo.findData(current_level)
+        if idx == -1:
+            idx = 0
+        self.log_level_combo.setCurrentIndex(idx)
+
         # buttons
         save_btn = QPushButton("Save")
         cancel_btn = QPushButton("Close")
@@ -146,6 +159,10 @@ class SettingsDialog(QDialog):
         form.addWidget(self.suggest_enabled)
         form.addWidget(QLabel("Max suggestion results:"))
         form.addWidget(self.suggest_max)
+
+        form.addWidget(QLabel("Logging:"))
+        form.addWidget(QLabel("Log level (WARNING = quiet, DEBUG = verbose):"))
+        form.addWidget(self.log_level_combo)
 
         # field mappings
         form.addWidget(QLabel("Field mapping (comma-separated per logical key):"))
@@ -228,6 +245,7 @@ class SettingsDialog(QDialog):
             "enabled": self.suggest_enabled.isChecked(),
             "max_results": int(self.suggest_max.currentData() or 12),
         }
+        log_level = self.log_level_combo.currentData() or "WARNING"
         # collect mapping
         fmap = {}
         for key, edit in self.map_edits.items():
@@ -244,6 +262,7 @@ class SettingsDialog(QDialog):
                 wiki_fmap[key] = vals
         for k, v in DEFAULT_CONFIG.get("wiktionary", {}).get("field_map", {}).items():
             wiki_fmap.setdefault(k, v)
+        logger.info("Saving settings (log_level=%s)", log_level)
         save_config(
             {
                 "note_type": note_type,
@@ -255,6 +274,7 @@ class SettingsDialog(QDialog):
                 "wiktionary": {"field_map": wiki_fmap},
                 "image_search": image_search,
                 "typo_suggestions": typo_suggestions,
+                "log_level": log_level,
             }
         )
         tooltip("Settings saved.", parent=self)

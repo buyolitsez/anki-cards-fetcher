@@ -14,10 +14,13 @@ try:
 except Exception:  # pragma: no cover
     BeautifulSoup = None  # type: ignore
 
+from ..logger import get_logger
 from ..media import USER_AGENT
 from ..models import Sense
 from .base import BaseFetcher
 from .wiktionary_common import suggest_via_opensearch
+
+logger = get_logger(__name__)
 
 HEADING_TAGS = ("h2", "h3", "h4", "h5", "h6")
 POS_TITLES = {
@@ -59,24 +62,30 @@ class EnglishWiktionaryFetcher(BaseFetcher):
     API_BASE = "https://en.wiktionary.org/w/api.php"
 
     def fetch(self, word: str) -> List[Sense]:
+        logger.info("Wiktionary (en): fetching '%s'", word)
         if not requests:
             raise RuntimeError("requests module not found. Install requests in the Anki environment.")
         if not BeautifulSoup:
             raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
 
         url = self.BASE.format(word=quote(word.strip()))
+        logger.debug("Wiktionary (en): requesting %s", url)
         try:
             resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
         except Exception as e:
+            logger.error("Wiktionary (en): request failed for '%s': %s", word, e)
             raise RuntimeError(f"Wiktionary request failed: {e}")
         if resp.status_code == 404:
+            logger.debug("Wiktionary (en): 404 for '%s'", word)
             return []
         if resp.status_code >= 400:
+            logger.error("Wiktionary (en): HTTP %d for '%s'", resp.status_code, word)
             raise RuntimeError(f"Wiktionary returned {resp.status_code} for '{word}'.")
 
         soup = BeautifulSoup(resp.text, "html.parser")
         lang_root = self._language_headline(soup, "English")
         if not lang_root:
+            logger.debug("Wiktionary (en): no English section found for '%s'", word)
             return []
 
         senses = self._parse_senses(lang_root)
@@ -87,6 +96,7 @@ class EnglishWiktionaryFetcher(BaseFetcher):
                     s.picture_url = picture
                 if not s.picture_referer:
                     s.picture_referer = "https://en.wiktionary.org/"
+        logger.info("Wiktionary (en): found %d senses for '%s'", len(senses), word)
         return senses
 
     def suggest(self, word: str, limit: int = 8) -> List[str]:

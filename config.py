@@ -8,6 +8,10 @@ from typing import Dict, Optional
 
 from aqt import mw
 
+from .logger import get_logger, set_log_level
+
+logger = get_logger(__name__)
+
 DEFAULT_IMAGE_PROVIDER = "duckduckgo"
 SUPPORTED_SOURCE_IDS = ("cambridge", "wiktionary", "wiktionary_en")
 DEFAULT_SOURCE_ID = "cambridge"
@@ -45,6 +49,7 @@ DEFAULT_CONFIG: Dict = {
         "enabled": True,
         "max_results": 12,
     },
+    "log_level": "WARNING",
 }
 
 # Add-on id helper (Anki may require the folder name in some versions)
@@ -62,11 +67,12 @@ def _read_meta_config() -> Dict:
         with META_PATH.open("r", encoding="utf-8") as f:
             meta = json.load(f)
         if isinstance(meta, dict) and isinstance(meta.get("config"), dict):
+            logger.debug("Loaded config from meta.json")
             return meta["config"]
     except FileNotFoundError:
-        pass
+        logger.debug("meta.json not found, skipping")
     except Exception:
-        traceback.print_exc()
+        logger.exception("Failed to read meta.json")
     return {}
 
 
@@ -74,11 +80,13 @@ def _read_config_json() -> Dict:
     try:
         with CONFIG_PATH.open("r", encoding="utf-8") as f:
             data = json.load(f)
+        logger.debug("Loaded config from config.json")
         return data if isinstance(data, dict) else {}
     except FileNotFoundError:
+        logger.debug("config.json not found, using defaults")
         return {}
     except Exception:
-        traceback.print_exc()
+        logger.exception("Failed to read config.json")
         return {}
 
 
@@ -111,6 +119,7 @@ def _normalized_config(raw_cfg: Dict) -> Dict:
     merged["wiktionary"] = _normalize_wiktionary_section(merged.get("wiktionary"))
     merged["image_search"] = normalize_image_search(merged.get("image_search"))
     merged["typo_suggestions"] = normalize_typo_suggestions(merged.get("typo_suggestions"))
+    merged["log_level"] = normalize_log_level(merged.get("log_level"))
     return merged
 
 
@@ -124,22 +133,26 @@ def get_config() -> Dict:
     try:
         stored = mw.addonManager.getConfig(ADDON_NAME) or {}
     except Exception:
-        traceback.print_exc()
+        logger.exception("Failed to read config via addonManager")
     if not stored:
         stored = _read_meta_config()
     if not stored:
         stored = _read_config_json()
-    return _normalized_config(stored)
+    cfg = _normalized_config(stored)
+    # Apply log level from config so it takes effect immediately.
+    set_log_level(cfg.get("log_level", "WARNING"))
+    return cfg
 
 
 def save_config(updates: Dict):
+    logger.info("Saving config updates: %s", list(updates.keys()))
     cfg = get_config()
     cfg.update(updates)
     cfg = _normalized_config(cfg)
     try:
         mw.addonManager.writeConfig(ADDON_NAME, cfg)
     except Exception:
-        traceback.print_exc()
+        logger.exception("Failed to write config via addonManager")
     # mirror to meta.json
     try:
         meta = {}
@@ -151,12 +164,15 @@ def save_config(updates: Dict):
         meta["config"] = cfg
         _write_json(META_PATH, meta)
     except Exception:
-        traceback.print_exc()
+        logger.exception("Failed to write meta.json")
     # plain config.json as fallback
     try:
         _write_json(CONFIG_PATH, cfg)
     except Exception:
-        traceback.print_exc()
+        logger.exception("Failed to write config.json")
+    # Apply the new log level immediately.
+    set_log_level(cfg.get("log_level", "WARNING"))
+    logger.debug("Config saved successfully")
 
 
 def normalize_field_map(fmap: Dict) -> Dict[str, list]:
@@ -236,3 +252,14 @@ def normalize_typo_suggestions(raw) -> Dict:
         max_results = out["max_results"]
     out["max_results"] = max(1, min(max_results, 40))
     return out
+
+
+def normalize_log_level(raw) -> str:
+    """Validate and normalize the log level string."""
+    from .logger import VALID_LEVELS
+
+    if isinstance(raw, str):
+        level = raw.strip().upper()
+        if level in VALID_LEVELS:
+            return level
+    return DEFAULT_CONFIG.get("log_level", "WARNING")

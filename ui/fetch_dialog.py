@@ -27,11 +27,14 @@ from aqt.utils import showInfo, showWarning, tooltip
 
 from ..config import get_config, save_config
 from ..fetchers import get_fetcher_by_id, get_fetchers
+from ..logger import get_logger
 from ..media import USER_AGENT, download_to_media
 from ..models import Sense
 from ..typo import fallback_queries, rank_suggestions
 from .image_search_dialog import ImageSearchDialog
 from .source_utils import configured_source_ids, ensure_source_selection
+
+logger = get_logger(__name__)
 
 
 class PicturePreviewDialog(QDialog):
@@ -613,16 +616,19 @@ class FetchDialog(QDialog):
                 source_senses = future.result() or []
             except Exception as e:
                 source_senses = []
+                logger.error("Fetch failed for source '%s': %s", source_id, e)
                 self._fetch_errors.append(f"{self._source_label(source_id)}: {e}")
                 self._set_source_status(source_id, "error")
             else:
                 if source_senses:
+                    logger.debug("Source '%s' returned %d senses", source_id, len(source_senses))
                     for sense in source_senses:
                         self.senses.append(sense)
                         self.sense_sources.append(source_id)
                         self.sense_list.addItem(QListWidgetItem(self._sense_item_text(sense, source_id)))
                     self._set_source_status(source_id, "ok", len(source_senses))
                 else:
+                    logger.debug("Source '%s' returned no senses", source_id)
                     self._set_source_status(source_id, "empty")
 
         if self.sense_list.count() and self.sense_list.currentRow() < 0:
@@ -670,10 +676,12 @@ class FetchDialog(QDialog):
             showWarning("Enter a word first.")
             return
         source_ids = self._selected_source_ids()
+        logger.info("Fetch requested: word='%s', sources=%s", word, source_ids)
         cfg_snapshot = get_config()
         self._start_fetch(word, source_ids, cfg_snapshot)
 
     def _try_typo_suggestions(self, word: str, source_ids: List[str]) -> bool:
+        logger.debug("Trying typo suggestions for '%s'", word)
         typo_cfg = self.cfg.get("typo_suggestions") if isinstance(self.cfg.get("typo_suggestions"), dict) else {}
         if not typo_cfg or not bool(typo_cfg.get("enabled", True)):
             return False
@@ -874,6 +882,7 @@ class FetchDialog(QDialog):
             showWarning("Select a sense first.")
             return
         sense = self.senses[row]
+        logger.info("Inserting sense #%d: '%s' (editor=%s)", row, sense.definition[:60], open_editor)
         col = mw.col
 
         # resolve model & deck from user choices
@@ -926,6 +935,7 @@ class FetchDialog(QDialog):
                 filename, _ = download_to_media(audio_url)
                 audio_tag = f"[sound:{filename}]"
             except Exception as e:
+                logger.error("Audio download failed: %s (url=%s)", e, audio_url)
                 showWarning(f"Audio download failed: {e}")
         set_field("audio", audio_tag)
 
@@ -936,6 +946,7 @@ class FetchDialog(QDialog):
                 fname, _ = download_to_media(sense.picture_url, referer=sense.picture_referer)
                 pic_tag = f'<img src=\"{fname}\">'
             except Exception as e:
+                logger.error("Image download failed: %s (url=%s)", e, sense.picture_url)
                 showWarning(f"Image download failed: {e}")
         set_field("picture", pic_tag)
 
@@ -968,6 +979,7 @@ class FetchDialog(QDialog):
             source_ids = self._selected_source_ids()
             save_config({"note_type": model["name"], "deck": deck_name, "sources": source_ids})
         mw.reset()
+        logger.info("Note added (model=%s, deck=%s)", model_name, deck_name)
         tooltip("Note added.", parent=self)
         if open_editor:
             self._open_browser(note.id)

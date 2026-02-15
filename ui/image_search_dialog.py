@@ -23,6 +23,7 @@ from aqt.qt import (
 from aqt.utils import showWarning, tooltip
 
 from ..config import get_config, save_config
+from ..logger import get_logger
 from ..image_search import (
     DEFAULT_IMAGE_PROVIDER,
     ImageResult,
@@ -30,6 +31,8 @@ from ..image_search import (
     get_image_provider_choices,
     search_images,
 )
+
+logger = get_logger(__name__)
 
 
 class ImageSearchDialog(QDialog):
@@ -138,6 +141,7 @@ class ImageSearchDialog(QDialog):
         if not query:
             showWarning("Enter a search query.")
             return
+        logger.info("Image search started: '%s'", query)
         image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
         provider = self.provider_combo.currentData() or image_cfg.get("provider", DEFAULT_IMAGE_PROVIDER)
 
@@ -169,6 +173,7 @@ class ImageSearchDialog(QDialog):
                 results, used_provider, safe = future.result()
             except Exception as e:
                 self._set_busy(False, "")
+                logger.error("Image search failed: %s", e)
                 showWarning(f"Image search failed: {e}")
                 traceback.print_exc()
                 return

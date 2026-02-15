@@ -14,10 +14,13 @@ try:
 except Exception:
     BeautifulSoup = None  # type: ignore
 
+from ..logger import get_logger
 from ..media import USER_AGENT
 from ..models import Sense
 from .base import BaseFetcher
 from .wiktionary_common import suggest_via_opensearch
+
+logger = get_logger(__name__)
 _LETTER_RE = re.compile(r"[A-Za-zА-Яа-яЁё]")
 _REF_MARKER_RE = re.compile(r"\[\s*[^A-Za-zА-Яа-яЁё\]]*\d+[^A-Za-zА-Яа-яЁё\]]*\]")
 _ORPHAN_BRACKET_RE = re.compile(r"(^|(?<=\s))[\[\]](?=\s|$)")
@@ -30,24 +33,30 @@ class WiktionaryFetcher(BaseFetcher):
     API_BASE = "https://ru.wiktionary.org/w/api.php"
 
     def fetch(self, word: str) -> List[Sense]:
+        logger.info("Wiktionary (ru): fetching '%s'", word)
         if not requests:
             raise RuntimeError("requests module not found. Install requests in the Anki environment.")
         if not BeautifulSoup:
             raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
 
         url = self.BASE.format(word=quote(word.strip()))
+        logger.debug("Wiktionary (ru): requesting %s", url)
         try:
             resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
         except Exception as e:
+            logger.error("Wiktionary (ru): request failed for '%s': %s", word, e)
             raise RuntimeError(f"Wiktionary request failed: {e}")
         if resp.status_code == 404:
+            logger.debug("Wiktionary (ru): 404 for '%s'", word)
             return []
         if resp.status_code >= 400:
+            logger.error("Wiktionary (ru): HTTP %d for '%s'", resp.status_code, word)
             raise RuntimeError(f"Wiktionary returned {resp.status_code} for '{word}'.")
 
         soup = BeautifulSoup(resp.text, "html.parser")
         lang_section = self._language_section(soup, "Русский")
         if not lang_section:
+            logger.debug("Wiktionary (ru): no Russian section found for '%s'", word)
             return []
 
         senses = self._parse_senses(lang_section)
@@ -63,6 +72,7 @@ class WiktionaryFetcher(BaseFetcher):
             for s in senses:
                 if not s.syllables:
                     s.syllables = syllables
+        logger.info("Wiktionary (ru): found %d senses for '%s'", len(senses), word)
         return senses
 
     def suggest(self, word: str, limit: int = 8) -> List[str]:

@@ -15,9 +15,12 @@ except Exception:
     BeautifulSoup = None  # type: ignore
 
 from ..config import DEFAULT_CONFIG
+from ..logger import get_logger
 from ..media import USER_AGENT
 from ..models import Sense
 from .base import BaseFetcher
+
+logger = get_logger(__name__)
 
 
 class CambridgeFetcher(BaseFetcher):
@@ -34,6 +37,7 @@ class CambridgeFetcher(BaseFetcher):
         self.dialect_priority = [d.lower() for d in cfg.get("dialect_priority", DEFAULT_CONFIG["dialect_priority"])]
 
     def fetch(self, word: str) -> List[Sense]:
+        logger.info("Cambridge: fetching '%s'", word)
         if not requests:
             raise RuntimeError("requests module not found. Install requests in the Anki environment.")
         if not BeautifulSoup:
@@ -44,9 +48,11 @@ class CambridgeFetcher(BaseFetcher):
         try:
             senses = self._parse_page(self.BASE, word)
         except Exception as e:
+            logger.warning("Cambridge base page failed for '%s': %s", word, e)
             base_error = e
 
         if not senses:
+            logger.debug("Cambridge: trying AMP page for '%s'", word)
             try:
                 amp_senses = self._parse_page(self.AMP_BASE, word)
             except Exception:
@@ -58,6 +64,7 @@ class CambridgeFetcher(BaseFetcher):
 
         # Fallback: AMP version may contain explicit media links
         if senses and all(not s.audio_urls for s in senses):
+            logger.debug("Cambridge: no audio in base senses, trying AMP for audio")
             amp_senses = self._parse_page(self.AMP_BASE, word)
             if amp_senses:
                 # Copy audio/picture from AMP data when available
@@ -74,8 +81,10 @@ class CambridgeFetcher(BaseFetcher):
             if soup:
                 global_audio = self._parse_audio(soup)
                 if global_audio:
+                    logger.debug("Cambridge: found global audio fallback for '%s'", word)
                     for s in senses:
                         s.audio_urls = global_audio.copy()
+        logger.info("Cambridge: found %d senses for '%s'", len(senses), word)
         return senses
 
     def suggest(self, word: str, limit: int = 8) -> List[str]:
@@ -84,6 +93,7 @@ class CambridgeFetcher(BaseFetcher):
         query = word.strip()
         if not query:
             return []
+        logger.debug("Cambridge: suggest for '%s' (limit=%d)", query, limit)
         url = self.SPELLCHECK_BASE.format(word=quote(query))
         try:
             resp = requests.get(
@@ -95,13 +105,16 @@ class CambridgeFetcher(BaseFetcher):
                 timeout=15,
             )
         except Exception:
+            logger.debug("Cambridge: spellcheck request failed for '%s'", query)
             return []
         if resp.status_code >= 400:
+            logger.debug("Cambridge: spellcheck returned %d for '%s'", resp.status_code, query)
             return []
         return self._parse_spellcheck_suggestions(resp.text, query, limit)
 
     def _parse_page(self, base_url: str, word: str) -> List[Sense]:
         url = base_url.format(word=word.strip().replace(" ", "-"))
+        logger.debug("Cambridge: requesting %s", url)
         try:
             resp = requests.get(
                 url,
@@ -116,10 +129,13 @@ class CambridgeFetcher(BaseFetcher):
             msg = str(e).strip()
             is_timeout = "timeout" in cls_name or "timed out" in msg.lower() or "timeout" in msg.lower()
             if is_timeout:
+                logger.error("Cambridge: request timed out for '%s'", word)
                 raise RuntimeError(f"Cambridge request timed out for '{word}'.")
             reason = msg or e.__class__.__name__
+            logger.error("Cambridge: request failed for '%s': %s", word, reason)
             raise RuntimeError(f"Cambridge request failed for '{word}': {reason}")
         if self._is_cloudflare_challenge(resp):
+            logger.error("Cambridge: Cloudflare challenge detected for '%s'", word)
             raise RuntimeError(
                 "Cambridge is temporarily blocking automated requests (Cloudflare challenge). "
                 "Try again later or use another source."

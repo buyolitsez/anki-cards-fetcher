@@ -14,7 +14,10 @@ try:
 except Exception:  # pragma: no cover - runtime guard
     requests = None  # type: ignore
 
+from .logger import get_logger
 from .media import USER_AGENT
+
+logger = get_logger(__name__)
 
 DEFAULT_IMAGE_PROVIDER = "duckduckgo"
 # Keep provider registry even with a single provider so engines can be restored later
@@ -45,6 +48,7 @@ def search_images(
     offset: int = 0,
     allow_fallback: bool = True,
 ) -> Tuple[List[ImageResult], str, bool]:
+    logger.info("Image search: query='%s', provider=%s, max=%d, offset=%d", query, provider, max_results, offset)
     if not requests:
         raise RuntimeError("requests module not found. Install requests in the Anki environment.")
     q = (query or "").strip()
@@ -57,6 +61,7 @@ def search_images(
         provider = DEFAULT_IMAGE_PROVIDER
     # Current release supports only DuckDuckGo, but provider plumbing stays generic.
     results = _search_duckduckgo(q, max_results, safe_search=safe_search, offset=offset)
+    logger.info("Image search: got %d results for '%s'", len(results), q)
     return results, provider, False
 
 
@@ -104,8 +109,10 @@ def _search_duckduckgo(
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
+    logger.debug("DuckDuckGo: fetching VQD token for '%s'", query)
     vqd, referer = _fetch_ddg_vqd(query, html_headers, timeout=timeout)
     if not vqd:
+        logger.error("DuckDuckGo: VQD token not found for '%s'", query)
         raise RuntimeError("DuckDuckGo token not found.")
 
     params = {
