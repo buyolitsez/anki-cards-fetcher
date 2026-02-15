@@ -345,6 +345,13 @@ class FetchDialog(QDialog):
         self._typo_cache: Dict[Tuple[str, str, int], List[str]] = {}
         self.source_checks: Dict[str, QCheckBox] = {}
         self.source_labels: Dict[str, str] = {}
+        self.source_status_labels: Dict[str, QLabel] = {}
+        self._fetch_executor: Optional[ThreadPoolExecutor] = None
+        self._fetch_timer: Optional[QTimer] = None
+        self._fetch_future_to_source: Dict[Future, str] = {}
+        self._fetch_errors: List[str] = []
+        self._fetch_word: str = ""
+        self._fetch_source_ids: List[str] = []
         self.setWindowTitle("Cambridge / Wiktionary Fetch")
 
         # widgets
@@ -427,16 +434,23 @@ class FetchDialog(QDialog):
         self.source_row.addWidget(QLabel("Sources:"))
         self.source_checks.clear()
         self.source_labels.clear()
+        self.source_status_labels.clear()
         fetchers = get_fetchers(self.cfg)
         selected_sources = configured_source_ids(self.cfg)
         for fetcher in fetchers:
             chk = QCheckBox(fetcher.LABEL)
             chk.setChecked(fetcher.ID in selected_sources)
             chk.stateChanged.connect(self._remember_selection)
+            status = QLabel("")
+            status.setMinimumWidth(64)
+            status.setStyleSheet("color: #666;")
             self.source_checks[fetcher.ID] = chk
             self.source_labels[fetcher.ID] = fetcher.LABEL
+            self.source_status_labels[fetcher.ID] = status
             self.source_row.addWidget(chk)
+            self.source_row.addWidget(status)
         ensure_source_selection(self.source_checks)
+        self._reset_source_statuses()
         self.source_row.addStretch(1)
 
         # note types
@@ -473,9 +487,11 @@ class FetchDialog(QDialog):
             self.deck_combo.setCurrentIndex(0)
 
     def _remember_selection(self, *_):
+        source_ids = self._selected_source_ids()
+        if not self._is_fetch_running():
+            self._reset_source_statuses()
         if not self.cfg.get("remember_last", True):
             return
-        source_ids = self._selected_source_ids()
         save_config(
             {
                 "note_type": self.ntype_combo.currentText(),
@@ -490,6 +506,56 @@ class FetchDialog(QDialog):
     def _source_label(self, source_id: str) -> str:
         return self.source_labels.get(source_id, source_id)
 
+    def _is_fetch_running(self) -> bool:
+        return bool(self._fetch_future_to_source)
+
+    def _set_source_status(self, source_id: str, state: str, count: int = 0):
+        label = self.source_status_labels.get(source_id)
+        if not label:
+            return
+        if state == "loading":
+            label.setText("loading")
+            label.setStyleSheet("color: #996600;")
+        elif state == "ok":
+            label.setText(f"ok ({count})")
+            label.setStyleSheet("color: #1f7a1f;")
+        elif state == "empty":
+            label.setText("empty")
+            label.setStyleSheet("color: #666;")
+        elif state == "error":
+            label.setText("error")
+            label.setStyleSheet("color: #b00020;")
+        else:
+            label.clear()
+            label.setStyleSheet("color: #666;")
+
+    def _reset_source_statuses(self):
+        for source_id in self.source_status_labels:
+            self._set_source_status(source_id, "idle")
+
+    def _shutdown_fetch_executor(self, cancel_pending: bool):
+        if not self._fetch_executor:
+            return
+        try:
+            self._fetch_executor.shutdown(wait=False, cancel_futures=cancel_pending)
+        except TypeError:
+            self._fetch_executor.shutdown(wait=False)
+        self._fetch_executor = None
+
+    def _abort_active_fetch(self, cancel_pending: bool):
+        if self._fetch_timer and self._fetch_timer.isActive():
+            self._fetch_timer.stop()
+        if cancel_pending:
+            for future in list(self._fetch_future_to_source.keys()):
+                if not future.done():
+                    future.cancel()
+        self._fetch_future_to_source.clear()
+        self._shutdown_fetch_executor(cancel_pending=cancel_pending)
+        self._fetch_errors = []
+        self._fetch_word = ""
+        self._fetch_source_ids = []
+        self._reset_source_statuses()
+
     def _sense_item_text(self, sense: Sense, source_id: str) -> str:
         preview = sense.preview_text(self.cfg["max_examples"], self.cfg["max_synonyms"])
         return f"[{self._source_label(source_id)}] {preview}"
@@ -498,31 +564,96 @@ class FetchDialog(QDialog):
         fetcher = get_fetcher_by_id(source_id, cfg_snapshot)
         return fetcher.fetch(word)
 
-    def _fetch_from_sources(self, source_ids: List[str], cfg_snapshot, word: str) -> Tuple[List[Sense], List[str], List[str]]:
-        source_to_senses: Dict[str, List[Sense]] = {}
-        errors: List[str] = []
-        max_workers = min(4, max(1, len(source_ids)))
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="multi-fetch") as pool:
-            future_to_source: Dict[Future, str] = {}
-            for source_id in source_ids:
-                future = pool.submit(self._fetch_for_source, source_id, cfg_snapshot, word)
-                future_to_source[future] = source_id
-            for future in as_completed(future_to_source):
-                source_id = future_to_source[future]
-                try:
-                    source_to_senses[source_id] = future.result() or []
-                except Exception as e:
-                    source_to_senses[source_id] = []
-                    errors.append(f"{self._source_label(source_id)}: {e}")
-                    traceback.print_exc()
+    def _start_fetch(self, word: str, source_ids: List[str], cfg_snapshot):
+        self._abort_active_fetch(cancel_pending=True)
+        self.senses = []
+        self.sense_sources = []
+        self.sense_list.clear()
+        self.preview.clear()
+        self._update_image_buttons(-1)
+        self._fetch_errors = []
+        self._fetch_word = word
+        self._fetch_source_ids = list(source_ids)
 
-        merged_senses: List[Sense] = []
-        merged_sources: List[str] = []
+        for source_id in self.source_checks:
+            if source_id in source_ids:
+                self._set_source_status(source_id, "loading")
+            else:
+                self._set_source_status(source_id, "idle")
+
+        max_workers = min(4, max(1, len(source_ids)))
+        self._fetch_executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="multi-fetch")
         for source_id in source_ids:
-            for sense in source_to_senses.get(source_id, []):
-                merged_senses.append(sense)
-                merged_sources.append(source_id)
-        return merged_senses, merged_sources, errors
+            try:
+                future = self._fetch_executor.submit(self._fetch_for_source, source_id, cfg_snapshot, word)
+            except Exception as e:
+                self._fetch_errors.append(f"{self._source_label(source_id)}: {e}")
+                self._set_source_status(source_id, "error")
+                traceback.print_exc()
+                continue
+            self._fetch_future_to_source[future] = source_id
+
+        if not self._fetch_timer:
+            self._fetch_timer = QTimer(self)
+            self._fetch_timer.setInterval(100)
+            self._fetch_timer.timeout.connect(self._poll_fetch_futures)
+        if not self._fetch_future_to_source:
+            self._finish_fetch()
+            return
+        self._fetch_timer.start()
+
+    def _poll_fetch_futures(self):
+        if not self._fetch_future_to_source:
+            return
+        done = [f for f in list(self._fetch_future_to_source.keys()) if f.done()]
+        if not done:
+            return
+        for future in done:
+            source_id = self._fetch_future_to_source.pop(future)
+            try:
+                source_senses = future.result() or []
+            except Exception as e:
+                source_senses = []
+                self._fetch_errors.append(f"{self._source_label(source_id)}: {e}")
+                self._set_source_status(source_id, "error")
+                traceback.print_exc()
+            else:
+                if source_senses:
+                    for sense in source_senses:
+                        self.senses.append(sense)
+                        self.sense_sources.append(source_id)
+                        self.sense_list.addItem(QListWidgetItem(self._sense_item_text(sense, source_id)))
+                    self._set_source_status(source_id, "ok", len(source_senses))
+                else:
+                    self._set_source_status(source_id, "empty")
+
+        if self.sense_list.count() and self.sense_list.currentRow() < 0:
+            self.sense_list.setCurrentRow(0)
+        if not self._fetch_future_to_source:
+            self._finish_fetch()
+
+    def _finish_fetch(self):
+        if self._fetch_timer and self._fetch_timer.isActive():
+            self._fetch_timer.stop()
+        self._shutdown_fetch_executor(cancel_pending=False)
+        errors = self._fetch_errors[:]
+        word = self._fetch_word
+        source_ids = self._fetch_source_ids[:] if self._fetch_source_ids else self._selected_source_ids()
+        self._fetch_future_to_source.clear()
+        self._fetch_errors = []
+        self._fetch_word = ""
+        self._fetch_source_ids = []
+
+        if not self.senses:
+            if self._try_typo_suggestions(word, source_ids):
+                return
+            if errors:
+                showWarning("No definitions found.\n\n" + "\n".join(errors[:4]))
+            else:
+                showInfo("No definitions found.")
+            return
+        if errors:
+            tooltip("Some sources failed:\n" + "\n".join(errors[:3]), parent=self)
 
     def _resolve_field_map(self, source_id: str) -> Dict[str, List[str]]:
         base_map = self.cfg.get("field_map", {})
@@ -542,25 +673,7 @@ class FetchDialog(QDialog):
             return
         source_ids = self._selected_source_ids()
         cfg_snapshot = get_config()
-        senses, sense_sources, errors = self._fetch_from_sources(source_ids, cfg_snapshot, word)
-        if not senses:
-            if self._try_typo_suggestions(word, source_ids):
-                return
-            if errors:
-                showWarning("No definitions found.\n\n" + "\n".join(errors[:4]))
-            else:
-                showInfo("No definitions found.")
-            return
-        if errors:
-            tooltip("Some sources failed:\n" + "\n".join(errors[:3]), parent=self)
-        self.senses = senses
-        self.sense_sources = sense_sources
-        self.sense_list.clear()
-        for idx, sense in enumerate(senses):
-            source_id = sense_sources[idx] if idx < len(sense_sources) else source_ids[0]
-            item = QListWidgetItem(self._sense_item_text(sense, source_id))
-            self.sense_list.addItem(item)
-        self.sense_list.setCurrentRow(0)
+        self._start_fetch(word, source_ids, cfg_snapshot)
 
     def _try_typo_suggestions(self, word: str, source_ids: List[str]) -> bool:
         typo_cfg = self.cfg.get("typo_suggestions") if isinstance(self.cfg.get("typo_suggestions"), dict) else {}
@@ -908,6 +1021,7 @@ class FetchDialog(QDialog):
             traceback.print_exc()
 
     def closeEvent(self, event):  # type: ignore[override]
+        self._abort_active_fetch(cancel_pending=True)
         # Safety: persist selected note type/deck even if signals were not triggered
         self._remember_selection()
         super().closeEvent(event)
