@@ -589,7 +589,6 @@ class FetchDialog(QDialog):
             except Exception as e:
                 self._fetch_errors.append(f"{self._source_label(source_id)}: {e}")
                 self._set_source_status(source_id, "error")
-                traceback.print_exc()
                 continue
             self._fetch_future_to_source[future] = source_id
 
@@ -616,7 +615,6 @@ class FetchDialog(QDialog):
                 source_senses = []
                 self._fetch_errors.append(f"{self._source_label(source_id)}: {e}")
                 self._set_source_status(source_id, "error")
-                traceback.print_exc()
             else:
                 if source_senses:
                     for sense in source_senses:
@@ -734,7 +732,6 @@ class FetchDialog(QDialog):
                 try:
                     suggested = future.result()
                 except Exception:
-                    traceback.print_exc()
                     suggested = []
                 for item in suggested:
                     if isinstance(item, str):

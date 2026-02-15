@@ -101,3 +101,44 @@ def test_cambridge_ipa_map(monkeypatch):
     ipa = senses[0].ipa
     assert ipa.get("uk", "").startswith("/")
     assert ipa.get("us", "").startswith("/")
+
+
+def test_cambridge_fetch_uses_amp_when_base_times_out(monkeypatch):
+    amp_html = """
+    <html><body>
+      <div class="entry">
+        <div class="entry-body__el">
+          <span class="pos dpos">noun</span>
+          <div class="def-block">
+            <div class="def ddef_d db">a barrier around an area</div>
+          </div>
+        </div>
+      </div>
+    </body></html>
+    """
+
+    class _Resp:
+        def __init__(self, text: str):
+            self.status_code = 200
+            self.text = text
+
+    def _fake_get(url, *_args, **_kwargs):
+        if "/dictionary/english/" in url:
+            raise TimeoutError("read timed out")
+        return _Resp(amp_html)
+
+    monkeypatch.setattr(cambridge_mod, "requests", types.SimpleNamespace(get=_fake_get))
+    fetcher = _make_fetcher()
+    senses = fetcher.fetch("fence")
+    assert senses
+    assert senses[0].definition == "a barrier around an area"
+
+
+def test_cambridge_fetch_raises_clear_timeout_when_all_requests_fail(monkeypatch):
+    def _fake_get(*_args, **_kwargs):
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(cambridge_mod, "requests", types.SimpleNamespace(get=_fake_get))
+    fetcher = _make_fetcher()
+    with pytest.raises(RuntimeError, match="Cambridge request timed out"):
+        fetcher.fetch("fence")

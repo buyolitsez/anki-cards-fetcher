@@ -26,6 +26,7 @@ class CambridgeFetcher(BaseFetcher):
     BASE = "https://dictionary.cambridge.org/dictionary/english/{word}"
     AMP_BASE = "https://dictionary.cambridge.org/amp/english/{word}"
     SPELLCHECK_BASE = "https://dictionary.cambridge.org/spellcheck/english/?q={word}"
+    REQUEST_TIMEOUT = (4, 12)
     _last_soup = None
 
     def __init__(self, cfg):
@@ -38,7 +39,23 @@ class CambridgeFetcher(BaseFetcher):
         if not BeautifulSoup:
             raise RuntimeError("bs4 not found. Install beautifulsoup4 in the Anki environment.")
 
-        senses = self._parse_page(self.BASE, word)
+        senses: List[Sense] = []
+        base_error: Optional[Exception] = None
+        try:
+            senses = self._parse_page(self.BASE, word)
+        except Exception as e:
+            base_error = e
+
+        if not senses:
+            try:
+                amp_senses = self._parse_page(self.AMP_BASE, word)
+            except Exception:
+                amp_senses = []
+            if amp_senses:
+                senses = amp_senses
+            elif base_error:
+                raise base_error
+
         # Fallback: AMP version may contain explicit media links
         if senses and all(not s.audio_urls for s in senses):
             amp_senses = self._parse_page(self.AMP_BASE, word)
@@ -85,14 +102,23 @@ class CambridgeFetcher(BaseFetcher):
 
     def _parse_page(self, base_url: str, word: str) -> List[Sense]:
         url = base_url.format(word=word.strip().replace(" ", "-"))
-        resp = requests.get(
-            url,
-            headers={
-                "User-Agent": USER_AGENT,
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-            timeout=15,
-        )
+        try:
+            resp = requests.get(
+                url,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+                timeout=self.REQUEST_TIMEOUT,
+            )
+        except Exception as e:
+            cls_name = e.__class__.__name__.lower()
+            msg = str(e).strip()
+            is_timeout = "timeout" in cls_name or "timed out" in msg.lower() or "timeout" in msg.lower()
+            if is_timeout:
+                raise RuntimeError(f"Cambridge request timed out for '{word}'.")
+            reason = msg or e.__class__.__name__
+            raise RuntimeError(f"Cambridge request failed for '{word}': {reason}")
         if resp.status_code >= 400:
             raise RuntimeError(f"Cambridge returned {resp.status_code} for '{word}'.")
 
