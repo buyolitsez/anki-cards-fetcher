@@ -59,5 +59,6 @@
   "typo_suggestions": {
     "enabled": true,
     "max_results": 30
-  }
+  },
+  "log_level": "DEBUG"
 }
