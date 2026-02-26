@@ -9,6 +9,7 @@ from aqt import mw
 from .exceptions import MediaDownloadError, MissingDependencyError
 from .http_client import USER_AGENT, require_requests
 from .logger import get_logger
+from .wikimedia_urls import normalize_wikimedia_image_url
 
 logger = get_logger(__name__)
 
@@ -72,12 +73,20 @@ def download_to_media(url: str, referer: Optional[str] = "https://dictionary.cam
     if referer:
         headers["Referer"] = referer
     try:
-        resp = requests.get(url, headers=headers, timeout=_MEDIA_DOWNLOAD_TIMEOUT)
+        request_url = url
+        resp = requests.get(request_url, headers=headers, timeout=_MEDIA_DOWNLOAD_TIMEOUT)
+        if resp.status_code == 429:
+            fallback_url = normalize_wikimedia_image_url(request_url)
+            if fallback_url != request_url:
+                logger.warning("Thumbnail rate-limited, retrying original Wikimedia URL: %s", fallback_url)
+                request_url = fallback_url
+                resp = requests.get(request_url, headers=headers, timeout=_MEDIA_DOWNLOAD_TIMEOUT)
         resp.raise_for_status()
     except MissingDependencyError:
         raise
     except Exception as e:
         raise MediaDownloadError(f"Download failed for {url}: {e}") from e
+    final_url = getattr(resp, "url", "") or request_url
     ctype = (resp.headers.get("Content-Type") or "").lower()
     is_audio = ctype.startswith("audio/") or url.lower().endswith((".mp3", ".wav", ".ogg"))
     is_image = ctype.startswith("image/") or url.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
@@ -85,7 +94,7 @@ def download_to_media(url: str, referer: Optional[str] = "https://dictionary.cam
         logger.error("Unexpected content-type '%s' for URL: %s", ctype, url)
         raise MediaDownloadError(f"Expected audio/image file, got {ctype or 'unknown'}")
     # derive filename
-    name = _derive_media_name(url, ctype)
+    name = _derive_media_name(final_url, ctype)
     # avoid collisions
     filename = mw.col.media.writeData(name, resp.content)
     path = mw.col.media.dir() + "/" + filename

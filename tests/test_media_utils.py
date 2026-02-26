@@ -147,3 +147,47 @@ def test_download_to_media_requires_requests_module(monkeypatch):
     monkeypatch.setattr(media_mod, "require_requests", raise_missing)
     with pytest.raises(MissingDependencyError, match="requests module not found"):
         media_mod.download_to_media("https://example.com/file.mp3")
+
+
+def test_download_to_media_retries_wikimedia_thumb_on_429(monkeypatch):
+    calls = []
+
+    class _Resp:
+        def __init__(self, status_code, url, content_type, content):
+            self.status_code = status_code
+            self.url = url
+            self.headers = {"Content-Type": content_type}
+            self.content = content
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+    class _Requests:
+        def get(self, url, **_kwargs):
+            calls.append(url)
+            if "/thumb/" in url:
+                return _Resp(status_code=429, url=url, content_type="text/plain", content=b"rate-limited")
+            return _Resp(status_code=200, url=url, content_type="image/png", content=b"png-bytes")
+
+    fake_media = types.SimpleNamespace(
+        writeData=lambda name, _content: name,
+        dir=lambda: "/tmp/anki-media",
+    )
+    fake_mw = types.SimpleNamespace(col=types.SimpleNamespace(media=fake_media))
+
+    monkeypatch.setattr(media_mod, "mw", fake_mw)
+    monkeypatch.setattr(media_mod, "require_requests", lambda: _Requests())
+
+    thumb_url = (
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/"
+        "Cocarde_Russie_1994.png/175px-Cocarde_Russie_1994.png"
+    )
+    filename, path = media_mod.download_to_media(thumb_url, referer="https://ru.wiktionary.org/")
+
+    assert calls == [
+        thumb_url,
+        "https://upload.wikimedia.org/wikipedia/commons/c/c6/Cocarde_Russie_1994.png",
+    ]
+    assert filename == "Cocarde_Russie_1994.png"
+    assert path == "/tmp/anki-media/Cocarde_Russie_1994.png"

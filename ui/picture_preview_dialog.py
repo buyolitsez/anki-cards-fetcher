@@ -19,6 +19,7 @@ from aqt.utils import showWarning
 
 from ..logger import get_logger
 from ..media import USER_AGENT
+from ..wikimedia_urls import normalize_wikimedia_image_url
 from .background import run_in_background
 
 logger = get_logger(__name__)
@@ -102,13 +103,19 @@ class PicturePreviewDialog(QDialog):
                 if referer:
                     headers["Referer"] = referer
                 try:
-                    resp = requests.get(resolved, headers=headers, timeout=15)
+                    request_url = resolved
+                    resp = requests.get(request_url, headers=headers, timeout=15)
+                    if resp.status_code == 429:
+                        fallback_url = normalize_wikimedia_image_url(request_url)
+                        if fallback_url != request_url:
+                            request_url = fallback_url
+                            resp = requests.get(request_url, headers=headers, timeout=15)
                     resp.raise_for_status()
                 except Exception as e:
                     errors.append(f"{label}: {e}")
                     return None
                 content_type = (resp.headers.get("Content-Type") or "").strip()
-                return resp.content, content_type, resolved
+                return resp.content, content_type, (getattr(resp, "url", "") or request_url)
 
             full = try_download(self.picture_url, self.picture_referer, "full")
             if full:

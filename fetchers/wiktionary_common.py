@@ -9,6 +9,7 @@ from ..exceptions import FetchError
 from ..http_client import USER_AGENT, require_bs4, require_requests
 from ..logger import get_logger
 from ..models import Sense
+from ..wikimedia_urls import normalize_wikimedia_image_url
 from .base import BaseFetcher
 
 logger = get_logger(__name__)
@@ -226,5 +227,5 @@ class BaseWiktionaryFetcher(BaseFetcher):
                 width = height = 0
             if width and height and (width < _MIN_IMAGE_SIZE or height < _MIN_IMAGE_SIZE):
                 continue
-            return src
+            return normalize_wikimedia_image_url(src)
         return None
