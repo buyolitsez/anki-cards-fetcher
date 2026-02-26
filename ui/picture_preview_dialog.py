@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import webbrowser
 from typing import List, Optional
-from urllib.parse import urlsplit
 
 from aqt.qt import (
     QDialog,
@@ -18,7 +17,7 @@ from aqt.qt import (
 from aqt.utils import showWarning
 
 from ..logger import get_logger
-from ..media import USER_AGENT
+from ..media import USER_AGENT, resolve_media_url
 from ..wikimedia_urls import normalize_wikimedia_image_url
 from .background import run_in_background
 
@@ -70,21 +69,9 @@ class PicturePreviewDialog(QDialog):
 
     def _open_in_browser(self):
         try:
-            webbrowser.open(self._resolved_url(self.picture_url))
+            webbrowser.open(resolve_media_url(self.picture_url, referer=self.picture_referer))
         except Exception as e:
             showWarning(f"Cannot open browser: {e}")
-
-    def _resolved_url(self, raw_url: Optional[str]) -> str:
-        url = (raw_url or "").strip()
-        if url.startswith("//"):
-            return "https:" + url
-        if url.startswith("/"):
-            if self.picture_referer:
-                ref = urlsplit(self.picture_referer)
-                if ref.scheme and ref.netloc:
-                    return f"{ref.scheme}://{ref.netloc}{url}"
-            return "https://dictionary.cambridge.org" + url
-        return url
 
     def _load_picture(self):
         def task():
@@ -93,7 +80,7 @@ class PicturePreviewDialog(QDialog):
             errors: List[str] = []
 
             def try_download(url: Optional[str], referer: Optional[str], label: str):
-                resolved = self._resolved_url(url)
+                resolved = resolve_media_url(url or "", referer=referer)
                 if not resolved:
                     return None
                 headers = {

@@ -5,7 +5,7 @@ import types
 import pytest
 
 import cambridge_fetch.media as media_mod
-from cambridge_fetch.media import _derive_media_name, _ext_from_content_type
+from cambridge_fetch.media import _derive_media_name, _ext_from_content_type, resolve_media_url
 from cambridge_fetch.exceptions import MediaDownloadError, MissingDependencyError
 
 
@@ -33,6 +33,16 @@ def test_derive_media_name_appends_extension_from_content_type():
 def test_derive_media_name_fallback_for_empty_or_dot_names():
     assert _derive_media_name("https://example.com/", "image/png") == "download.png"
     assert _derive_media_name("https://example.com/..", "audio/ogg") == "download.ogg"
+
+
+def test_resolve_media_url_handles_protocol_relative_and_absolute():
+    assert resolve_media_url("//cdn.example.com/img.jpg") == "https://cdn.example.com/img.jpg"
+    assert resolve_media_url("https://cdn.example.com/img.jpg") == "https://cdn.example.com/img.jpg"
+
+
+def test_resolve_media_url_uses_referer_host_for_relative_urls():
+    assert resolve_media_url("/img.jpg", referer="https://ru.wiktionary.org/wiki/test") == "https://ru.wiktionary.org/img.jpg"
+    assert resolve_media_url("/img.jpg", referer=None) == "https://dictionary.cambridge.org/img.jpg"
 
 
 def test_download_to_media_success_with_protocol_relative_url(monkeypatch):
@@ -191,3 +201,73 @@ def test_download_to_media_retries_wikimedia_thumb_on_429(monkeypatch):
     ]
     assert filename == "Cocarde_Russie_1994.png"
     assert path == "/tmp/anki-media/Cocarde_Russie_1994.png"
+
+
+def test_download_to_media_uses_fallback_url_when_primary_fails(monkeypatch):
+    calls = []
+
+    class _Resp:
+        def __init__(self, status_code, url, content_type, content):
+            self.status_code = status_code
+            self.url = url
+            self.headers = {"Content-Type": content_type}
+            self.content = content
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+    class _Requests:
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs.get("headers") or {}))
+            if "broken.example" in url:
+                raise RuntimeError("dns failed")
+            return _Resp(status_code=200, url=url, content_type="image/jpeg", content=b"jpeg")
+
+    fake_media = types.SimpleNamespace(
+        writeData=lambda name, _content: name,
+        dir=lambda: "/tmp/anki-media",
+    )
+    fake_mw = types.SimpleNamespace(col=types.SimpleNamespace(media=fake_media))
+
+    monkeypatch.setattr(media_mod, "mw", fake_mw)
+    monkeypatch.setattr(media_mod, "require_requests", lambda: _Requests())
+
+    filename, path = media_mod.download_to_media(
+        "https://broken.example/full.webp",
+        referer="https://source.example/",
+        fallback_url="https://cdn.example/thumb.jpg",
+    )
+
+    assert calls[0][0] == "https://broken.example/full.webp"
+    assert calls[0][1]["Referer"] == "https://source.example/"
+    assert calls[1][0] == "https://cdn.example/thumb.jpg"
+    assert "Referer" not in calls[1][1]
+    assert filename == "thumb.jpg"
+    assert path == "/tmp/anki-media/thumb.jpg"
+
+
+def test_download_to_media_includes_both_errors_when_fallback_fails(monkeypatch):
+    class _Requests:
+        def get(self, url, **_kwargs):
+            if "primary.example" in url:
+                raise RuntimeError("primary dns failed")
+            raise RuntimeError("fallback blocked")
+
+    fake_media = types.SimpleNamespace(
+        writeData=lambda name, _content: name,
+        dir=lambda: "/tmp/anki-media",
+    )
+    fake_mw = types.SimpleNamespace(col=types.SimpleNamespace(media=fake_media))
+
+    monkeypatch.setattr(media_mod, "mw", fake_mw)
+    monkeypatch.setattr(media_mod, "require_requests", lambda: _Requests())
+
+    with pytest.raises(MediaDownloadError) as exc_info:
+        media_mod.download_to_media(
+            "https://primary.example/full.webp",
+            fallback_url="https://fallback.example/thumb.jpg",
+        )
+    message = str(exc_info.value)
+    assert "primary dns failed" in message
+    assert "fallback blocked" in message

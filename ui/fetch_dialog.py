@@ -696,7 +696,12 @@ class FetchDialog(QDialog):
         pic_tag = ""
         if sense.picture_url:
             try:
-                fname, _ = download_to_media(sense.picture_url, referer=sense.picture_referer)
+                fname, _ = download_to_media(
+                    sense.picture_url,
+                    referer=sense.picture_referer,
+                    fallback_url=sense.picture_thumb_url,
+                    fallback_referer=sense.picture_referer,
+                )
                 pic_tag = f'<img src="{fname}">'
             except Exception as e:
                 logger.error("Image download failed: %s (url=%s)", e, sense.picture_url)

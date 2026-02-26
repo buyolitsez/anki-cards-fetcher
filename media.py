@@ -54,42 +54,80 @@ def _derive_media_name(url: str, content_type: str = "") -> str:
     return name
 
 
-def download_to_media(url: str, referer: Optional[str] = "https://dictionary.cambridge.org/") -> Tuple[str, str]:
+def resolve_media_url(url: str, referer: Optional[str] = None) -> str:
+    url = (url or "").strip()
+    if url.startswith("//"):
+        return "https:" + url
+    if url.startswith("/"):
+        if referer:
+            ref = urlsplit(referer)
+            if ref.scheme and ref.netloc:
+                return f"{ref.scheme}://{ref.netloc}{url}"
+        return "https://dictionary.cambridge.org" + url
+    return url
+
+
+def _download_with_requests(url: str, headers: dict, referer: Optional[str] = None):
+    requests = require_requests()
+    request_url = resolve_media_url(url, referer=referer)
+    resp = requests.get(request_url, headers=headers, timeout=_MEDIA_DOWNLOAD_TIMEOUT)
+    if resp.status_code == 429:
+        fallback_url = normalize_wikimedia_image_url(request_url)
+        if fallback_url != request_url:
+            logger.warning("Thumbnail rate-limited, retrying original Wikimedia URL: %s", fallback_url)
+            request_url = fallback_url
+            resp = requests.get(request_url, headers=headers, timeout=_MEDIA_DOWNLOAD_TIMEOUT)
+    resp.raise_for_status()
+    return resp, request_url
+
+
+def download_to_media(
+    url: str,
+    referer: Optional[str] = "https://dictionary.cambridge.org/",
+    fallback_url: Optional[str] = None,
+    fallback_referer: Optional[str] = None,
+) -> Tuple[str, str]:
     """Download a file into Anki media. Returns (filename, local_path).
 
     Also validates content-type to avoid saving HTML/captcha pages as audio/images.
     Raises ``MediaDownloadError`` on failure.
     """
     logger.info("Downloading media: %s", url)
-    requests = require_requests()
-    if url.startswith("//"):
-        url = "https:" + url
-    if url.startswith("/"):
-        url = "https://dictionary.cambridge.org" + url
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "*/*",
     }
     if referer:
         headers["Referer"] = referer
+    primary_error = None
     try:
-        request_url = url
-        resp = requests.get(request_url, headers=headers, timeout=_MEDIA_DOWNLOAD_TIMEOUT)
-        if resp.status_code == 429:
-            fallback_url = normalize_wikimedia_image_url(request_url)
-            if fallback_url != request_url:
-                logger.warning("Thumbnail rate-limited, retrying original Wikimedia URL: %s", fallback_url)
-                request_url = fallback_url
-                resp = requests.get(request_url, headers=headers, timeout=_MEDIA_DOWNLOAD_TIMEOUT)
-        resp.raise_for_status()
+        resp, request_url = _download_with_requests(url, headers, referer=referer)
     except MissingDependencyError:
         raise
     except Exception as e:
-        raise MediaDownloadError(f"Download failed for {url}: {e}") from e
+        primary_error = e
+        if not fallback_url:
+            raise MediaDownloadError(f"Download failed for {url}: {e}") from e
+        fallback_headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "*/*",
+        }
+        if fallback_referer:
+            fallback_headers["Referer"] = fallback_referer
+        logger.warning("Primary media URL failed (%s), trying fallback URL: %s", e, fallback_url)
+        try:
+            resp, request_url = _download_with_requests(fallback_url, fallback_headers, referer=fallback_referer)
+        except MissingDependencyError:
+            raise
+        except Exception as fallback_err:
+            raise MediaDownloadError(
+                f"Download failed for {url}: {primary_error}; fallback failed for {fallback_url}: {fallback_err}"
+            ) from fallback_err
     final_url = getattr(resp, "url", "") or request_url
     ctype = (resp.headers.get("Content-Type") or "").lower()
-    is_audio = ctype.startswith("audio/") or url.lower().endswith((".mp3", ".wav", ".ogg"))
-    is_image = ctype.startswith("image/") or url.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
+    type_hint_url = final_url.lower()
+    is_audio = ctype.startswith("audio/") or type_hint_url.endswith((".mp3", ".wav", ".ogg"))
+    is_image = ctype.startswith("image/") or type_hint_url.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
     if not (is_audio or is_image or ctype == "application/octet-stream"):
         logger.error("Unexpected content-type '%s' for URL: %s", ctype, url)
         raise MediaDownloadError(f"Expected audio/image file, got {ctype or 'unknown'}")
