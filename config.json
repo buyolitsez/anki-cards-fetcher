@@ -1,6 +1,6 @@
 {
-  "note_type": "english ivantea kolya",
-  "deck": "english (Ivantea, Kolya)",
+  "note_type": "Basic",
+  "deck": "Default",
   "remember_last": true,
   "field_map": {
     "word": [
@@ -65,8 +65,8 @@
     {
       "id": "default",
       "name": "Default",
-      "note_type": "english ivantea kolya",
-      "deck": "english (Ivantea, Kolya)",
+      "note_type": "Basic",
+      "deck": "Default",
       "sources": [
         "cambridge",
         "wiktionary",
