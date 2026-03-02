@@ -33,8 +33,7 @@ An Anki add-on that fills notes with data from Cambridge Dictionary, ru.wiktiona
 Open `Tools -> Dictionary Fetch - Settings`.
 
 Available options:
-- default note type and deck;
-- default sources;
+- preset profiles for all fetch settings (note type, deck, sources, mappings, typo/image options, dialect, etc.);
 - Cambridge dialect priority (UK/US);
 - image result count and `safe_search`;
 - typo suggestions on/off and max number of confirmed suggestions;

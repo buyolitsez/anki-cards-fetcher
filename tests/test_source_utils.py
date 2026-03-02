@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from cambridge_fetch.ui.source_utils import configured_source_ids, ensure_source_selection
+from cambridge_fetch.ui.source_utils import configured_source_ids, ensure_source_selection, set_source_selection
 
 
 class _Check:
@@ -39,3 +39,14 @@ def test_configured_source_ids_returns_clean_values():
 
 def test_ensure_source_selection_empty_dict_returns_default():
     assert ensure_source_selection({}) == ["cambridge"]
+
+
+def test_set_source_selection_updates_checkboxes_and_keeps_fallback():
+    checks = {"cambridge": _Check(False), "wiktionary": _Check(False)}
+    assert set_source_selection(checks, ["wiktionary"]) == ["wiktionary"]
+    assert checks["wiktionary"].isChecked() is True
+    assert checks["cambridge"].isChecked() is False
+
+    # Invalid selection falls back to default.
+    assert set_source_selection(checks, ["unknown"]) == ["cambridge"]
+    assert checks["cambridge"].isChecked() is True

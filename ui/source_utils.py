@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Set
+from typing import Dict, Iterable, List, Set
 
 from ..config import DEFAULT_CONFIG
 
@@ -33,3 +33,16 @@ def ensure_source_selection(source_checks: Dict[str, object]) -> List[str]:
         getattr(first_chk, "setChecked")(True)
         return [first_id]
     return [fallback]
+
+
+def set_source_selection(source_checks: Dict[str, object], source_ids: Iterable[str]) -> List[str]:
+    selected = {str(source_id).strip() for source_id in source_ids if str(source_id).strip()}
+    for source_id, chk in source_checks.items():
+        checked = source_id in selected
+        blocker = getattr(chk, "blockSignals", None)
+        if callable(blocker):
+            blocker(True)
+        getattr(chk, "setChecked")(checked)
+        if callable(blocker):
+            blocker(False)
+    return ensure_source_selection(source_checks)

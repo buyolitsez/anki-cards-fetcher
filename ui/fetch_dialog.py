@@ -19,11 +19,10 @@ from aqt.qt import (
     QTextEdit,
     QTimer,
     QVBoxLayout,
-    Qt,
 )
 from aqt.utils import showInfo, showWarning, tooltip
 
-from ..config import get_config, save_config
+from ..config import get_active_preset, get_config, save_config
 from ..fetchers import get_fetcher_by_id, get_fetchers
 from ..logger import get_logger
 from ..media import download_to_media
@@ -31,7 +30,7 @@ from ..models import Sense
 from ..typo import fallback_queries, rank_suggestions
 from .image_search_dialog import ImageSearchDialog
 from .picture_preview_dialog import PicturePreviewDialog
-from .source_utils import configured_source_ids, ensure_source_selection
+from .source_utils import configured_source_ids, ensure_source_selection, set_source_selection
 from .suggestion_picker_dialog import SuggestionPickerDialog
 
 logger = get_logger(__name__)
@@ -49,6 +48,7 @@ class FetchDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.cfg = get_config()
+        self._applying_preset = False
         self.senses: List[Sense] = []
         self.sense_sources: List[str] = []
         self._typo_cache: Dict[Tuple[str, str, int], List[str]] = {}
@@ -76,6 +76,7 @@ class FetchDialog(QDialog):
         self.preview_image_btn = QPushButton("Preview Image")
         self.clear_image_btn = QPushButton("Clear Image")
 
+        self.preset_combo = QComboBox()
         self.ntype_combo = QComboBox()
         self.deck_combo = QComboBox()
         self.source_row = QHBoxLayout()
@@ -88,6 +89,8 @@ class FetchDialog(QDialog):
         top.addWidget(self.fetch_btn)
 
         combos = QHBoxLayout()
+        combos.addWidget(QLabel("Preset:"))
+        combos.addWidget(self.preset_combo)
         combos.addWidget(QLabel("Note type:"))
         combos.addWidget(self.ntype_combo)
         combos.addWidget(QLabel("Deck:"))
@@ -121,16 +124,13 @@ class FetchDialog(QDialog):
         self.image_btn.clicked.connect(self.on_find_image)
         self.preview_image_btn.clicked.connect(self.on_preview_image)
         self.clear_image_btn.clicked.connect(self.on_clear_image)
+        self.preset_combo.currentIndexChanged.connect(self.on_preset_changed)
         self.ntype_combo.currentTextChanged.connect(self._remember_selection)
         self.deck_combo.currentTextChanged.connect(self._remember_selection)
         self._update_image_buttons(-1)
 
     # ---------- UI helpers ----------
     def _populate_models(self):
-        # Qt6 renamed MatchFixedString -> MatchFlag.MatchExactly; keep compat with Qt5
-        match_fixed = getattr(Qt, "MatchFixedString", None)
-        if not match_fixed and hasattr(Qt, "MatchFlag"):
-            match_fixed = getattr(Qt.MatchFlag, "MatchExactly", 0)
         # reload config to pick up persisted selections
         self.cfg = get_config()
         col = mw.col
@@ -158,56 +158,141 @@ class FetchDialog(QDialog):
             self.source_status_labels[fetcher.ID] = status
             self.source_row.addWidget(chk)
             self.source_row.addWidget(status)
-        ensure_source_selection(self.source_checks)
         self._reset_source_statuses()
         self.source_row.addStretch(1)
 
         # note types
         self.ntype_combo.clear()
         models = col.models.allNames()
-        self.ntype_combo.addItems(models)
-        cfg_model = (self.cfg.get("note_type") or "").strip()
-        if cfg_model:
-            idx = self.ntype_combo.findText(cfg_model, match_fixed)
-            if idx == -1:
-                for i, name in enumerate(models):
-                    if name.lower() == cfg_model.lower():
-                        idx = i
-                        break
-            if idx != -1:
-                self.ntype_combo.setCurrentIndex(idx)
-        elif models:
-            self.ntype_combo.setCurrentIndex(0)
+        for name in models:
+            self.ntype_combo.addItem(name, name)
+
         # decks
         self.deck_combo.clear()
         decks = list(col.decks.allNames())
-        self.deck_combo.addItems(decks)
-        cfg_deck = (self.cfg.get("deck") or "").strip()
-        if cfg_deck:
-            idx = self.deck_combo.findText(cfg_deck, match_fixed)
-            if idx == -1:
-                for i, name in enumerate(decks):
-                    if name.lower() == cfg_deck.lower():
-                        idx = i
-                        break
+        for name in decks:
+            self.deck_combo.addItem(name, name)
+
+        self._populate_presets_combo()
+        active_preset = get_active_preset(self.cfg) or {}
+        self._apply_preset_to_controls(active_preset)
+
+    @staticmethod
+    def _find_combo_index_by_data(combo: QComboBox, value) -> int:
+        if value is None:
+            return -1
+        for i in range(combo.count()):
+            data = combo.itemData(i)
+            if isinstance(data, str) and isinstance(value, str):
+                if data.strip().casefold() == value.strip().casefold():
+                    return i
+                continue
+            if data == value:
+                return i
+        return -1
+
+    def _select_combo_value(self, combo: QComboBox, value: Optional[str], missing_suffix: str):
+        combo.blockSignals(True)
+        try:
+            if value is None:
+                if combo.count():
+                    combo.setCurrentIndex(0)
+                return
+            idx = self._find_combo_index_by_data(combo, value)
+            if idx == -1 and value.strip():
+                combo.addItem(f"{value} ({missing_suffix})", value)
+                idx = combo.count() - 1
             if idx != -1:
-                self.deck_combo.setCurrentIndex(idx)
-        elif decks:
-            self.deck_combo.setCurrentIndex(0)
+                combo.setCurrentIndex(idx)
+        finally:
+            combo.blockSignals(False)
+
+    def _populate_presets_combo(self):
+        presets = self.cfg.get("presets") if isinstance(self.cfg.get("presets"), list) else []
+        self.preset_combo.blockSignals(True)
+        try:
+            self.preset_combo.clear()
+            for preset in presets:
+                preset_id = str(preset.get("id") or "").strip()
+                if not preset_id:
+                    continue
+                name = str(preset.get("name") or preset_id).strip() or preset_id
+                self.preset_combo.addItem(name, preset_id)
+            active_id = str(self.cfg.get("active_preset_id") or "")
+            idx = self._find_combo_index_by_data(self.preset_combo, active_id)
+            if idx == -1 and self.preset_combo.count():
+                idx = 0
+            if idx != -1:
+                self.preset_combo.setCurrentIndex(idx)
+        finally:
+            self.preset_combo.blockSignals(False)
+
+    def _active_preset_id(self) -> Optional[str]:
+        data = self.preset_combo.currentData()
+        if isinstance(data, str) and data.strip():
+            return data.strip()
+        fallback = self.cfg.get("active_preset_id")
+        return str(fallback).strip() if isinstance(fallback, str) and fallback.strip() else None
+
+    def _apply_preset_to_controls(self, preset: Dict):
+        self._applying_preset = True
+        try:
+            note_type = preset.get("note_type")
+            deck = preset.get("deck")
+            source_ids = preset.get("sources") if isinstance(preset.get("sources"), list) else []
+            self._select_combo_value(self.ntype_combo, note_type if isinstance(note_type, str) else None, "missing")
+            self._select_combo_value(self.deck_combo, deck if isinstance(deck, str) else None, "missing")
+            set_source_selection(self.source_checks, source_ids)
+        finally:
+            self._applying_preset = False
+        if not self._is_fetch_running():
+            self._reset_source_statuses()
+
+    def _selected_note_type(self) -> Optional[str]:
+        data = self.ntype_combo.currentData()
+        if isinstance(data, str) and data.strip():
+            return data.strip()
+        text = self.ntype_combo.currentText().strip()
+        return text or None
+
+    def _selected_deck(self) -> Optional[str]:
+        data = self.deck_combo.currentData()
+        if isinstance(data, str) and data.strip():
+            return data.strip()
+        text = self.deck_combo.currentText().strip()
+        return text or None
+
+    def on_preset_changed(self, *_):
+        preset_id = self._active_preset_id()
+        if not preset_id:
+            return
+        save_config({"active_preset_id": preset_id})
+        self.cfg = get_config()
+        self._populate_presets_combo()
+        preset = get_active_preset(self.cfg) or {}
+        self._apply_preset_to_controls(preset)
 
     def _remember_selection(self, *_):
+        if self._applying_preset:
+            return
         source_ids = self._selected_source_ids()
         if not self._is_fetch_running():
             self._reset_source_statuses()
         if not self.cfg.get("remember_last", True):
             return
+        updates = {
+            "note_type": self._selected_note_type(),
+            "deck": self._selected_deck(),
+            "sources": source_ids,
+        }
+        active_preset_id = self._active_preset_id()
+        if active_preset_id:
+            updates["active_preset_id"] = active_preset_id
         save_config(
-            {
-                "note_type": self.ntype_combo.currentText(),
-                "deck": self.deck_combo.currentText(),
-                "sources": source_ids,
-            }
+            updates
         )
+        self.cfg = get_config()
+        self._populate_presets_combo()
 
     def _selected_source_ids(self) -> List[str]:
         return ensure_source_selection(self.source_checks)
@@ -597,9 +682,18 @@ class FetchDialog(QDialog):
         logger.info("Inserting sense #%d: '%s' (editor=%s)", row, sense.definition[:60], open_editor)
         col = mw.col
 
-        model_name = self.ntype_combo.currentText()
+        model_name = self._selected_note_type()
+        if not model_name:
+            showWarning("Select a note type first.")
+            return
         model = col.models.byName(model_name)
-        deck_name = self.deck_combo.currentText()
+        if not model:
+            showWarning(f"Note type not found: {model_name}")
+            return
+        deck_name = self._selected_deck()
+        if not deck_name:
+            showWarning("Select a deck first.")
+            return
         deck_id = col.decks.id(deck_name)
         col.decks.select(deck_id)
         col.models.setCurrent(model)
@@ -621,7 +715,11 @@ class FetchDialog(QDialog):
 
         if self.cfg.get("remember_last", True):
             source_ids = self._selected_source_ids()
-            save_config({"note_type": model["name"], "deck": deck_name, "sources": source_ids})
+            updates = {"note_type": model["name"], "deck": deck_name, "sources": source_ids}
+            active_preset_id = self._active_preset_id()
+            if active_preset_id:
+                updates["active_preset_id"] = active_preset_id
+            save_config(updates)
         mw.reset()
         logger.info("Note added (model=%s, deck=%s)", model_name, deck_name)
         tooltip("Note added.", parent=self)

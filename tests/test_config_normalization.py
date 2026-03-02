@@ -32,6 +32,9 @@ def test_get_config_normalizes_legacy_source_and_nested(monkeypatch):
     cfg = config_mod.get_config()
 
     assert cfg["sources"] == ["wiktionary_en"]
+    assert cfg["active_preset_id"] == "default"
+    assert cfg["presets"][0]["name"] == "Default"
+    assert cfg["presets"][0]["sources"] == ["wiktionary_en"]
     assert "source" not in cfg
     assert cfg["field_map"]["word"] == ["Term", "Front"]
     assert cfg["field_map"]["definition"] == ["Def"]
@@ -54,11 +57,13 @@ def test_save_config_normalizes_and_writes_files(monkeypatch, tmp_path):
     assert manager.written is not None
     _, saved_cfg = manager.written
     assert saved_cfg["sources"] == ["wiktionary"]
+    assert saved_cfg["presets"][0]["sources"] == ["wiktionary"]
     assert "source" not in saved_cfg
 
     meta = json.loads((tmp_path / "meta.json").read_text(encoding="utf-8"))
     plain = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
     assert meta["config"]["sources"] == ["wiktionary"]
+    assert meta["config"]["presets"][0]["sources"] == ["wiktionary"]
     assert plain["sources"] == ["wiktionary"]
 
 

@@ -1,6 +1,6 @@
 {
-  "note_type": "мои слова",
-  "deck": "русский",
+  "note_type": "english ivantea kolya",
+  "deck": "english (Ivantea, Kolya)",
   "remember_last": true,
   "field_map": {
     "word": [
@@ -60,5 +60,138 @@
     "enabled": true,
     "max_results": 30
   },
-  "log_level": "DEBUG"
+  "log_level": "DEBUG",
+  "presets": [
+    {
+      "id": "default",
+      "name": "Default",
+      "note_type": "english ivantea kolya",
+      "deck": "english (Ivantea, Kolya)",
+      "sources": [
+        "cambridge",
+        "wiktionary",
+        "wiktionary_en"
+      ],
+      "remember_last": true,
+      "field_map": {
+        "word": [
+          "Word",
+          "Front"
+        ],
+        "definition": [
+          "Definition"
+        ],
+        "examples": [
+          "Examples",
+          "Example"
+        ],
+        "synonyms": [
+          "Synonyms"
+        ],
+        "pos": [
+          "POS",
+          "Front"
+        ],
+        "ipa": [
+          "IPA",
+          "Front"
+        ],
+        "audio": [
+          "Audio"
+        ],
+        "picture": [
+          "Picture",
+          "Image"
+        ]
+      },
+      "wiktionary": {
+        "field_map": {
+          "syllables": [
+            "Syllables"
+          ]
+        }
+      },
+      "dialect_priority": [
+        "uk",
+        "us"
+      ],
+      "max_examples": 3,
+      "max_synonyms": 4,
+      "image_search": {
+        "provider": "duckduckgo",
+        "max_results": 12,
+        "safe_search": true
+      },
+      "typo_suggestions": {
+        "enabled": true,
+        "max_results": 30
+      },
+      "log_level": "DEBUG"
+    },
+    {
+      "id": "ru",
+      "name": "ru",
+      "note_type": "мои слова",
+      "deck": "русский",
+      "sources": [
+        "wiktionary"
+      ],
+      "remember_last": true,
+      "field_map": {
+        "word": [
+          "Word",
+          "Front"
+        ],
+        "definition": [
+          "Definition"
+        ],
+        "examples": [
+          "Examples",
+          "Example"
+        ],
+        "synonyms": [
+          "Synonyms"
+        ],
+        "pos": [
+          "POS",
+          "Front"
+        ],
+        "ipa": [
+          "IPA",
+          "Front"
+        ],
+        "audio": [
+          "Audio"
+        ],
+        "picture": [
+          "Picture",
+          "Image"
+        ]
+      },
+      "wiktionary": {
+        "field_map": {
+          "syllables": [
+            "Syllables"
+          ]
+        }
+      },
+      "dialect_priority": [
+        "uk",
+        "us"
+      ],
+      "max_examples": 3,
+      "max_synonyms": 4,
+      "image_search": {
+        "provider": "duckduckgo",
+        "max_results": 12,
+        "safe_search": true
+      },
+      "typo_suggestions": {
+        "enabled": true,
+        "max_results": 30
+      },
+      "log_level": "DEBUG"
+    }
+  ],
+  "active_preset_id": "default"
 }
