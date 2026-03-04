@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor
+from threading import Event
 from typing import Dict, List, Optional, Tuple
 
 from aqt import dialogs, mw
@@ -27,7 +28,7 @@ from ..fetchers import get_fetcher_by_id, get_fetchers
 from ..logger import get_logger
 from ..media import download_to_media
 from ..models import Sense
-from ..typo import fallback_queries, rank_suggestions
+from ..typo import TypoCollectResult, collect_typo_suggestions
 from .image_search_dialog import ImageSearchDialog
 from .picture_preview_dialog import PicturePreviewDialog
 from .source_utils import configured_source_ids, ensure_source_selection, set_source_selection
@@ -42,6 +43,9 @@ _MAX_FETCH_WORKERS = 4
 _MAX_TYPO_SUGGEST_WORKERS = 8
 _TYPO_CACHE_LIMIT = 80
 _POLL_INTERVAL_MS = 100
+_SEARCH_STATE_IDLE = "idle"
+_SEARCH_STATE_FETCHING = "fetching"
+_SEARCH_STATE_TYPO = "typo_collecting"
 
 
 class FetchDialog(QDialog):
@@ -55,12 +59,26 @@ class FetchDialog(QDialog):
         self.source_checks: Dict[str, QCheckBox] = {}
         self.source_labels: Dict[str, str] = {}
         self.source_status_labels: Dict[str, QLabel] = {}
+        self._search_state = _SEARCH_STATE_IDLE
+        self._operation_id = 0
+        self._active_operation_id = 0
+        self._cancel_event = Event()
         self._fetch_executor: Optional[ThreadPoolExecutor] = None
         self._fetch_timer: Optional[QTimer] = None
-        self._fetch_future_to_source: Dict[Future, str] = {}
+        self._fetch_future_to_source: Dict[Future, Tuple[str, int]] = {}
         self._fetch_errors: List[str] = []
         self._fetch_word: str = ""
         self._fetch_source_ids: List[str] = []
+        self._typo_executor: Optional[ThreadPoolExecutor] = None
+        self._typo_timer: Optional[QTimer] = None
+        self._typo_future: Optional[Future] = None
+        self._typo_operation_id = 0
+        self._typo_word: str = ""
+        self._typo_source_ids: List[str] = []
+        self._typo_cfg_snapshot: Dict = {}
+        self._typo_max_results = 12
+        self._typo_errors: List[str] = []
+        self._typo_cache_key: Optional[Tuple[str, str, int]] = None
         self.setWindowTitle("Cambridge / Wiktionary Fetch")
 
         # widgets
@@ -128,6 +146,7 @@ class FetchDialog(QDialog):
         self.ntype_combo.currentTextChanged.connect(self._remember_selection)
         self.deck_combo.currentTextChanged.connect(self._remember_selection)
         self._update_image_buttons(-1)
+        self._set_search_state(_SEARCH_STATE_IDLE)
 
     # ---------- UI helpers ----------
     def _populate_models(self):
@@ -288,9 +307,7 @@ class FetchDialog(QDialog):
         active_preset_id = self._active_preset_id()
         if active_preset_id:
             updates["active_preset_id"] = active_preset_id
-        save_config(
-            updates
-        )
+        save_config(updates)
         self.cfg = get_config()
         self._populate_presets_combo()
 
@@ -301,7 +318,36 @@ class FetchDialog(QDialog):
         return self.source_labels.get(source_id, source_id)
 
     def _is_fetch_running(self) -> bool:
-        return bool(self._fetch_future_to_source)
+        return self._search_state in (_SEARCH_STATE_FETCHING, _SEARCH_STATE_TYPO)
+
+    def _next_operation_id(self) -> int:
+        self._operation_id += 1
+        return self._operation_id
+
+    def _set_search_state(self, state: str):
+        self._search_state = state
+        busy = state != _SEARCH_STATE_IDLE
+        self.fetch_btn.setText("Cancel" if busy else "Fetch")
+        self._set_search_ui_busy(busy)
+
+    def _set_search_ui_busy(self, is_busy: bool):
+        self.word_edit.setEnabled(not is_busy)
+        self.preset_combo.setEnabled(not is_busy)
+        self.ntype_combo.setEnabled(not is_busy)
+        self.deck_combo.setEnabled(not is_busy)
+        self.sense_list.setEnabled(not is_busy)
+        self.insert_btn.setEnabled(not is_busy)
+        self.edit_btn.setEnabled(not is_busy)
+        self.image_btn.setEnabled(not is_busy)
+        for chk in self.source_checks.values():
+            chk.setEnabled(not is_busy)
+        if is_busy:
+            self.preview_image_btn.setVisible(False)
+            self.preview_image_btn.setEnabled(False)
+            self.clear_image_btn.setEnabled(False)
+        else:
+            self._update_image_buttons(self.sense_list.currentRow())
+        self.fetch_btn.setEnabled(True)
 
     def _set_source_status(self, source_id: str, state: str, count: int = 0):
         label = self.source_status_labels.get(source_id)
@@ -319,6 +365,9 @@ class FetchDialog(QDialog):
         elif state == "error":
             label.setText("error")
             label.setStyleSheet("color: #b00020;")
+        elif state == "canceled":
+            label.setText("canceled")
+            label.setStyleSheet("color: #8c5a00;")
         else:
             label.clear()
             label.setStyleSheet("color: #666;")
@@ -336,9 +385,23 @@ class FetchDialog(QDialog):
             self._fetch_executor.shutdown(wait=False)
         self._fetch_executor = None
 
-    def _abort_active_fetch(self, cancel_pending: bool):
+    def _shutdown_typo_executor(self, cancel_pending: bool):
+        if not self._typo_executor:
+            return
+        try:
+            self._typo_executor.shutdown(wait=False, cancel_futures=cancel_pending)
+        except TypeError:
+            self._typo_executor.shutdown(wait=False)
+        self._typo_executor = None
+
+    def _cancel_fetch_tasks(self, cancel_pending: bool, mark_loading_canceled: bool):
         if self._fetch_timer and self._fetch_timer.isActive():
             self._fetch_timer.stop()
+        if mark_loading_canceled:
+            for future, meta in list(self._fetch_future_to_source.items()):
+                source_id, operation_id = meta
+                if operation_id == self._active_operation_id and not future.done():
+                    self._set_source_status(source_id, "canceled")
         if cancel_pending:
             for future in list(self._fetch_future_to_source.keys()):
                 if not future.done():
@@ -348,7 +411,29 @@ class FetchDialog(QDialog):
         self._fetch_errors = []
         self._fetch_word = ""
         self._fetch_source_ids = []
-        self._reset_source_statuses()
+
+    def _cancel_typo_tasks(self, cancel_pending: bool):
+        if self._typo_timer and self._typo_timer.isActive():
+            self._typo_timer.stop()
+        if self._typo_future and cancel_pending and not self._typo_future.done():
+            self._typo_future.cancel()
+        self._typo_future = None
+        self._typo_operation_id = 0
+        self._typo_word = ""
+        self._typo_source_ids = []
+        self._typo_cfg_snapshot = {}
+        self._typo_max_results = 12
+        self._typo_errors = []
+        self._typo_cache_key = None
+        self._shutdown_typo_executor(cancel_pending=cancel_pending)
+
+    def _cancel_search(self):
+        if not self._is_fetch_running():
+            return
+        self._cancel_event.set()
+        self._cancel_fetch_tasks(cancel_pending=True, mark_loading_canceled=True)
+        self._cancel_typo_tasks(cancel_pending=True)
+        self._set_search_state(_SEARCH_STATE_IDLE)
 
     def _sense_item_text(self, sense: Sense, source_id: str) -> str:
         preview = sense.preview_text(self.cfg["max_examples"], self.cfg["max_synonyms"])
@@ -360,7 +445,11 @@ class FetchDialog(QDialog):
         return fetcher.fetch(word)
 
     def _start_fetch(self, word: str, source_ids: List[str], cfg_snapshot: Dict):
-        self._abort_active_fetch(cancel_pending=True)
+        self._cancel_fetch_tasks(cancel_pending=True, mark_loading_canceled=False)
+        self._cancel_typo_tasks(cancel_pending=True)
+        self._cancel_event = Event()
+        self._active_operation_id = self._next_operation_id()
+        self._set_search_state(_SEARCH_STATE_FETCHING)
         self.senses = []
         self.sense_sources = []
         self.sense_list.clear()
@@ -385,14 +474,14 @@ class FetchDialog(QDialog):
                 self._fetch_errors.append(f"{self._source_label(source_id)}: {e}")
                 self._set_source_status(source_id, "error")
                 continue
-            self._fetch_future_to_source[future] = source_id
+            self._fetch_future_to_source[future] = (source_id, self._active_operation_id)
 
         if not self._fetch_timer:
             self._fetch_timer = QTimer(self)
             self._fetch_timer.setInterval(_POLL_INTERVAL_MS)
             self._fetch_timer.timeout.connect(self._poll_fetch_futures)
         if not self._fetch_future_to_source:
-            self._finish_fetch()
+            self._finish_fetch(self._active_operation_id)
             return
         self._fetch_timer.start()
 
@@ -403,7 +492,11 @@ class FetchDialog(QDialog):
         if not done:
             return
         for future in done:
-            source_id = self._fetch_future_to_source.pop(future)
+            source_id, operation_id = self._fetch_future_to_source.pop(future)
+            if operation_id != self._active_operation_id or self._search_state != _SEARCH_STATE_FETCHING:
+                continue
+            if self._cancel_event.is_set():
+                continue
             try:
                 source_senses = future.result() or []
             except Exception as e:
@@ -425,10 +518,12 @@ class FetchDialog(QDialog):
 
         if self.sense_list.count() and self.sense_list.currentRow() < 0:
             self.sense_list.setCurrentRow(0)
-        if not self._fetch_future_to_source:
-            self._finish_fetch()
+        if not self._fetch_future_to_source and self._search_state == _SEARCH_STATE_FETCHING:
+            self._finish_fetch(self._active_operation_id)
 
-    def _finish_fetch(self):
+    def _finish_fetch(self, operation_id: int):
+        if operation_id != self._active_operation_id:
+            return
         if self._fetch_timer and self._fetch_timer.isActive():
             self._fetch_timer.stop()
         self._shutdown_fetch_executor(cancel_pending=False)
@@ -440,16 +535,19 @@ class FetchDialog(QDialog):
         self._fetch_word = ""
         self._fetch_source_ids = []
 
+        if self._cancel_event.is_set():
+            self._set_search_state(_SEARCH_STATE_IDLE)
+            return
+
         if not self.senses:
-            if self._try_typo_suggestions(word, source_ids):
+            if self._start_typo_collection(word, source_ids, errors):
                 return
-            if errors:
-                showWarning("No definitions found.\n\n" + "\n".join(errors[:4]))
-            else:
-                showInfo("No definitions found.")
+            self._set_search_state(_SEARCH_STATE_IDLE)
+            self._show_no_definitions(errors)
             return
         if errors:
             tooltip("Some sources failed:\n" + "\n".join(errors[:3]), parent=self)
+        self._set_search_state(_SEARCH_STATE_IDLE)
 
     def _resolve_field_map(self, source_id: str) -> Dict[str, List[str]]:
         base_map = self.cfg.get("field_map", {})
@@ -463,6 +561,9 @@ class FetchDialog(QDialog):
 
     # ---------- User actions ----------
     def on_fetch(self):
+        if self._is_fetch_running():
+            self._cancel_search()
+            return
         self.cfg = get_config()
         word = self.word_edit.text().strip()
         if not word:
@@ -474,86 +575,136 @@ class FetchDialog(QDialog):
         self._start_fetch(word, source_ids, cfg_snapshot)
 
     # ---------- Typo suggestions ----------
-    def _try_typo_suggestions(self, word: str, source_ids: List[str]) -> bool:
-        logger.debug("Trying typo suggestions for '%s'", word)
+    def _parse_typo_max_results(self) -> int:
         typo_cfg = self.cfg.get("typo_suggestions") if isinstance(self.cfg.get("typo_suggestions"), dict) else {}
-        if not typo_cfg or not bool(typo_cfg.get("enabled", True)):
-            return False
         try:
             max_results = int(typo_cfg.get("max_results") or 12)
         except Exception:
             max_results = 12
-        max_results = max(1, min(max_results, 40))
-        cfg_snapshot = get_config()
-        suggestions = self._collect_typo_suggestions(word, source_ids, cfg_snapshot, max_results)
-        if not suggestions:
-            return False
-        selected = self._pick_suggestion(word, suggestions, max_results, source_ids, cfg_snapshot)
-        if not selected:
-            return True
-        self.word_edit.setText(selected)
-        self.on_fetch()
-        return True
+        return max(1, min(max_results, 40))
 
-    def _collect_typo_suggestions(self, word: str, source_ids: List[str], cfg_snapshot: Dict, max_results: int) -> List[str]:
-        source_key = ",".join(source_ids)
-        cache_key = (source_key, word.casefold(), max_results)
-        cached = self._typo_cache.get(cache_key)
-        if cached is not None:
-            return cached[:]
-
-        candidates: List[str] = []
-        seen_candidates: set[str] = set()
-
-        def add_candidate(candidate: str):
-            item = (candidate or "").strip()
-            if not item:
-                return
-            key = item.casefold()
-            if key in seen_candidates:
-                return
-            seen_candidates.add(key)
-            candidates.append(item)
-
-        query_count = max(8, min(max_results + 6, 18))
-        fetch_limit = max(8, min(max_results * 2, 20))
-        target_candidates = max(max_results * 3, 16)
-        queries = fallback_queries(word, max_queries=query_count)
-        for query in queries:
-            if query.casefold() != word.casefold():
-                add_candidate(query)
-
-        max_workers = min(_MAX_TYPO_SUGGEST_WORKERS, max(1, len(queries) * len(source_ids)))
-        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="typo-suggest") as pool:
-            future_to_source: Dict[Future, str] = {}
-            for source_id in source_ids:
-                for query in queries:
-                    future = pool.submit(self._suggest_for_query, source_id, cfg_snapshot, query, fetch_limit)
-                    future_to_source[future] = source_id
-            for future in as_completed(future_to_source):
-                try:
-                    suggested = future.result()
-                except Exception:
-                    suggested = []
-                for item in suggested:
-                    if isinstance(item, str):
-                        add_candidate(item)
-                if len(candidates) >= target_candidates:
-                    for pending in future_to_source:
-                        if not pending.done():
-                            pending.cancel()
-                    break
-
-        ranked_limit = max(max_results * 4, max_results + 12)
-        ranked = rank_suggestions(word, candidates, ranked_limit)
-        self._typo_cache[cache_key] = ranked
+    def _cache_typo_suggestions(self, cache_key: Tuple[str, str, int], suggestions: List[str]):
+        self._typo_cache[cache_key] = suggestions[:]
         if len(self._typo_cache) > _TYPO_CACHE_LIMIT:
             try:
                 oldest = next(iter(self._typo_cache))
                 del self._typo_cache[oldest]
             except Exception:
                 self._typo_cache.clear()
-        return ranked[:]
+
+    def _show_no_definitions(self, errors: List[str]):
+        if errors:
+            showWarning("No definitions found.\n\n" + "\n".join(errors[:4]))
+        else:
+            showInfo("No definitions found.")
+
+    def _start_typo_collection(self, word: str, source_ids: List[str], errors: List[str]) -> bool:
+        logger.debug("Trying typo suggestions for '%s'", word)
+        typo_cfg = self.cfg.get("typo_suggestions") if isinstance(self.cfg.get("typo_suggestions"), dict) else {}
+        if not typo_cfg or not bool(typo_cfg.get("enabled", True)):
+            return False
+        max_results = self._parse_typo_max_results()
+        cfg_snapshot = get_config()
+        source_key = ",".join(source_ids)
+        cache_key = (source_key, word.casefold(), max_results)
+        cached = self._typo_cache.get(cache_key)
+        if cached is not None:
+            self._set_search_state(_SEARCH_STATE_IDLE)
+            selected = self._pick_suggestion(word, cached[:], max_results, source_ids, cfg_snapshot)
+            if selected:
+                self.word_edit.setText(selected)
+                self.on_fetch()
+            return True
+
+        self._set_search_state(_SEARCH_STATE_TYPO)
+        self._typo_operation_id = self._active_operation_id
+        self._typo_word = word
+        self._typo_source_ids = source_ids[:]
+        self._typo_cfg_snapshot = cfg_snapshot
+        self._typo_max_results = max_results
+        self._typo_errors = errors[:]
+        self._typo_cache_key = cache_key
+        self._typo_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="typo-collect")
+        self._typo_future = self._typo_executor.submit(
+            self._collect_typo_in_background,
+            word,
+            source_ids[:],
+            cfg_snapshot,
+            max_results,
+            self._cancel_event,
+        )
+        if not self._typo_timer:
+            self._typo_timer = QTimer(self)
+            self._typo_timer.setInterval(_POLL_INTERVAL_MS)
+            self._typo_timer.timeout.connect(self._poll_typo_future)
+        self._typo_timer.start()
+        return True
+
+    def _collect_typo_in_background(
+        self,
+        word: str,
+        source_ids: List[str],
+        cfg_snapshot: Dict,
+        max_results: int,
+        cancel_event: Event,
+    ) -> TypoCollectResult:
+        def suggest_for_query(source_id: str, query: str, fetch_limit: int) -> List[str]:
+            return self._suggest_for_query(source_id, cfg_snapshot, query, fetch_limit)
+
+        return collect_typo_suggestions(
+            word=word,
+            source_ids=source_ids,
+            max_results=max_results,
+            suggest_for_query=suggest_for_query,
+            cancel_event=cancel_event,
+            max_workers=_MAX_TYPO_SUGGEST_WORKERS,
+        )
+
+    def _poll_typo_future(self):
+        if not self._typo_future:
+            return
+        if not self._typo_future.done():
+            return
+
+        future = self._typo_future
+        operation_id = self._typo_operation_id
+        word = self._typo_word
+        source_ids = self._typo_source_ids[:]
+        cfg_snapshot = self._typo_cfg_snapshot
+        max_results = self._typo_max_results
+        errors = self._typo_errors[:]
+        cache_key = self._typo_cache_key
+        self._cancel_typo_tasks(cancel_pending=False)
+
+        if operation_id != self._active_operation_id:
+            return
+        if self._cancel_event.is_set():
+            self._set_search_state(_SEARCH_STATE_IDLE)
+            return
+
+        try:
+            result = future.result()
+        except Exception as e:
+            logger.error("Typo suggestion collection failed for '%s': %s", word, e)
+            result = TypoCollectResult(suggestions=[], cancelled=False)
+
+        if result.cancelled:
+            self._set_search_state(_SEARCH_STATE_IDLE)
+            return
+
+        suggestions = result.suggestions[:]
+        if suggestions:
+            if cache_key is not None:
+                self._cache_typo_suggestions(cache_key, suggestions)
+            self._set_search_state(_SEARCH_STATE_IDLE)
+            selected = self._pick_suggestion(word, suggestions, max_results, source_ids, cfg_snapshot)
+            if selected:
+                self.word_edit.setText(selected)
+                self.on_fetch()
+            return
+
+        self._set_search_state(_SEARCH_STATE_IDLE)
+        self._show_no_definitions(errors)
 
     def _suggest_for_query(self, source_id: str, cfg_snapshot: Dict, query: str, fetch_limit: int) -> List[str]:
         fetcher = get_fetcher_by_id(source_id, cfg_snapshot)
@@ -616,13 +767,19 @@ class FetchDialog(QDialog):
         self._update_image_buttons(row)
 
     def _update_image_buttons(self, row: int):
-        has_picture = 0 <= row < len(self.senses) and bool(self.senses[row].picture_url)
+        has_picture = (
+            not self._is_fetch_running()
+            and 0 <= row < len(self.senses)
+            and bool(self.senses[row].picture_url)
+        )
         self.preview_image_btn.setVisible(has_picture)
         self.preview_image_btn.setEnabled(has_picture)
-        self.clear_image_btn.setEnabled(has_picture)
+        self.clear_image_btn.setEnabled(has_picture and not self._is_fetch_running())
 
     # ---------- Image ----------
     def on_find_image(self):
+        if self._is_fetch_running():
+            return
         row = self.sense_list.currentRow()
         if row < 0 or row >= len(self.senses):
             showWarning("Select a sense first.")
@@ -643,6 +800,8 @@ class FetchDialog(QDialog):
             self._refresh_sense_item(row)
 
     def on_preview_image(self):
+        if self._is_fetch_running():
+            return
         row = self.sense_list.currentRow()
         if row < 0 or row >= len(self.senses):
             showWarning("Select a sense first.")
@@ -661,6 +820,8 @@ class FetchDialog(QDialog):
         dlg.exec()
 
     def on_clear_image(self):
+        if self._is_fetch_running():
+            return
         row = self.sense_list.currentRow()
         if row < 0 or row >= len(self.senses):
             showWarning("Select a sense first.")
@@ -674,6 +835,8 @@ class FetchDialog(QDialog):
 
     # ---------- Insert note ----------
     def on_insert(self, open_editor: bool = False):
+        if self._is_fetch_running():
+            return
         row = self.sense_list.currentRow()
         if row < 0 or row >= len(self.senses):
             showWarning("Select a sense first.")
@@ -872,7 +1035,7 @@ class FetchDialog(QDialog):
             logger.exception("Failed to open browser for note %d", nid)
 
     def closeEvent(self, event):  # type: ignore[override]
-        self._abort_active_fetch(cancel_pending=True)
+        self._cancel_search()
         # Safety: persist selected note type/deck even if signals were not triggered
         self._remember_selection()
         super().closeEvent(event)
