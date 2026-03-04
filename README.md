@@ -15,6 +15,7 @@ An Anki add-on that fills notes with data from Cambridge Dictionary, ru.wiktiona
 - Suggests close word variants when no exact match is found (typo/fuzzy suggestions).
 - Validates typo suggestions against real dictionary entries.
 - Writes data into your fields through configurable field mapping.
+- Auto-selects a preset by detected word language (English/Russian) when configured in Settings.
 
 ## Image Search
 - The current version uses only `DuckDuckGo`.
@@ -34,8 +35,10 @@ Open `Tools -> Dictionary Fetch - Settings`.
 
 Available options:
 - preset profiles for all fetch settings (note type, deck, sources, mappings, typo/image options, dialect, etc.);
+- language defaults for presets (`English -> preset`, `Russian -> preset`);
 - Cambridge dialect priority (UK/US);
 - image result count and `safe_search`;
 - typo suggestions on/off and max number of confirmed suggestions;
 - field mapping (`word`, `definition`, `examples`, `synonyms`, `pos`, `ipa`, `audio`, `picture`);
 - RU Wiktionary mapping (`wiktionary.field_map.syllables`).
+

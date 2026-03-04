@@ -1,6 +1,6 @@
 {
-  "note_type": "Basic",
-  "deck": "Default",
+  "note_type": "мои слова",
+  "deck": "русский",
   "remember_last": true,
   "field_map": {
     "word": [
@@ -47,9 +47,7 @@
   "max_examples": 3,
   "max_synonyms": 4,
   "sources": [
-    "cambridge",
-    "wiktionary",
-    "wiktionary_en"
+    "wiktionary"
   ],
   "image_search": {
     "provider": "duckduckgo",
@@ -65,11 +63,10 @@
     {
       "id": "default",
       "name": "Default",
-      "note_type": "Basic",
-      "deck": "Default",
+      "note_type": "english ivantea kolya",
+      "deck": "english (Ivantea, Kolya)",
       "sources": [
         "cambridge",
-        "wiktionary",
         "wiktionary_en"
       ],
       "remember_last": true,
@@ -193,5 +190,9 @@
       "log_level": "DEBUG"
     }
   ],
-  "active_preset_id": "default"
+  "active_preset_id": "ru",
+  "language_default_presets": {
+    "en": "default",
+    "ru": "ru"
+  }
 }

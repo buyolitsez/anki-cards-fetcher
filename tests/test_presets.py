@@ -167,3 +167,40 @@ def test_save_config_routes_other_settings_into_active_preset(monkeypatch, tmp_p
     assert saved_cfg["image_search"]["max_results"] == 30
     assert saved_cfg["field_map"]["word"] == ["Term"]
     assert saved_cfg["remember_last"] is False
+
+
+def test_normalize_language_default_presets_validates_preset_ids():
+    presets = [
+        {"id": "default", "name": "Default"},
+        {"id": "ru", "name": "ru"},
+    ]
+    out = config_mod.normalize_language_default_presets(
+        {"en": "default", "ru": "missing", "de": "x"},
+        presets,
+    )
+    assert out == {"en": "default", "ru": None}
+
+
+def test_normalized_config_resets_removed_language_default_preset():
+    cfg = config_mod._normalized_config(
+        {
+            "presets": [
+                {"id": "default", "name": "Default", "sources": ["cambridge"]},
+                {"id": "ru", "name": "ru", "sources": ["wiktionary"]},
+            ],
+            "active_preset_id": "default",
+            "language_default_presets": {"en": "default", "ru": "ru"},
+        }
+    )
+    assert cfg["language_default_presets"] == {"en": "default", "ru": "ru"}
+
+    cfg_removed = config_mod._normalized_config(
+        {
+            "presets": [
+                {"id": "default", "name": "Default", "sources": ["cambridge"]},
+            ],
+            "active_preset_id": "default",
+            "language_default_presets": {"en": "default", "ru": "ru"},
+        }
+    )
+    assert cfg_removed["language_default_presets"] == {"en": "default", "ru": None}

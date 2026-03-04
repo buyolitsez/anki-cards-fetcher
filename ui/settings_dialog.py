@@ -23,6 +23,7 @@ from aqt.utils import tooltip
 from ..config import DEFAULT_CONFIG, PRESET_PAYLOAD_KEYS, get_config, save_config
 from ..fetchers import get_fetchers
 from ..image_search import DEFAULT_IMAGE_PROVIDER, get_image_provider_choices
+from ..language_detection import language_label, supported_language_codes
 from ..logger import get_logger
 from .source_utils import ensure_source_selection, set_source_selection
 
@@ -35,6 +36,10 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Cambridge/Wiktionary — Settings")
         self.cfg = get_config()
         self.presets: List[Dict] = deepcopy(self.cfg.get("presets") or [])
+        self.language_default_presets: Dict[str, Optional[str]] = self._normalize_language_default_presets(
+            self.cfg.get("language_default_presets")
+        )
+        self.language_default_preset_combos: Dict[str, QComboBox] = {}
         self._initial_preset_id = str(self.cfg.get("active_preset_id") or "")
         self._loading_preset = False
         self._editing_preset_id: Optional[str] = None
@@ -55,6 +60,9 @@ class SettingsDialog(QDialog):
         self.rename_preset_btn.clicked.connect(self.on_rename_preset)
         self.duplicate_preset_btn.clicked.connect(self.on_duplicate_preset)
         self.delete_preset_btn.clicked.connect(self.on_delete_preset)
+
+        for code in supported_language_codes():
+            self.language_default_preset_combos[code] = QComboBox()
 
         # note type selector (preset-scoped)
         self.ntype_combo = QComboBox()
@@ -154,6 +162,11 @@ class SettingsDialog(QDialog):
         preset_row.addWidget(self.duplicate_preset_btn)
         preset_row.addWidget(self.delete_preset_btn)
         form.addLayout(preset_row)
+
+        form.addWidget(QLabel("Default preset by language:"))
+        for code in supported_language_codes():
+            form.addWidget(QLabel(f"{language_label(code)} default preset:"))
+            form.addWidget(self.language_default_preset_combos[code])
 
         form.addWidget(QLabel("Preset note type:"))
         form.addWidget(self.ntype_combo)
@@ -459,7 +472,58 @@ class SettingsDialog(QDialog):
                 self._editing_preset_id = None
         finally:
             self.preset_combo.blockSignals(False)
+        self._populate_language_default_preset_combos()
         self._load_preset_into_controls(self._editing_preset_id)
+
+    def _normalize_language_default_presets(self, raw) -> Dict[str, Optional[str]]:
+        out: Dict[str, Optional[str]] = {code: None for code in supported_language_codes()}
+        if not isinstance(raw, dict):
+            return out
+        for code in supported_language_codes():
+            value = raw.get(code)
+            out[code] = value.strip() if isinstance(value, str) and value.strip() else None
+        return out
+
+    def _populate_language_default_preset_combos(self):
+        for code in supported_language_codes():
+            combo = self.language_default_preset_combos[code]
+            if combo.count():
+                data = combo.currentData()
+                self.language_default_presets[code] = data.strip() if isinstance(data, str) and data.strip() else None
+
+        preset_lookup = {str(p.get("id") or "").strip(): str(p.get("name") or "").strip() for p in self.presets}
+        for code in supported_language_codes():
+            combo = self.language_default_preset_combos[code]
+            target = self.language_default_presets.get(code)
+            combo.blockSignals(True)
+            try:
+                combo.clear()
+                combo.addItem("None", "")
+                for preset in self.presets:
+                    preset_id = str(preset.get("id") or "").strip()
+                    if not preset_id:
+                        continue
+                    name = str(preset.get("name") or preset_id).strip() or preset_id
+                    combo.addItem(name, preset_id)
+                if target and target in preset_lookup:
+                    idx = combo.findData(target)
+                    if idx != -1:
+                        combo.setCurrentIndex(idx)
+                    else:
+                        combo.setCurrentIndex(0)
+                else:
+                    self.language_default_presets[code] = None
+                    combo.setCurrentIndex(0)
+            finally:
+                combo.blockSignals(False)
+
+    def _collect_language_default_presets(self) -> Dict[str, Optional[str]]:
+        out: Dict[str, Optional[str]] = {code: None for code in supported_language_codes()}
+        for code in supported_language_codes():
+            combo = self.language_default_preset_combos[code]
+            data = combo.currentData()
+            out[code] = data.strip() if isinstance(data, str) and data.strip() else None
+        return out
 
     def on_preset_changed(self, *_):
         if self._loading_preset:
@@ -554,10 +618,12 @@ class SettingsDialog(QDialog):
     def on_save(self):
         self._store_controls_into_preset(self._editing_preset_id)
         self._ensure_presets()
+        self.language_default_presets = self._collect_language_default_presets()
         logger.info("Saving settings (presets=%d)", len(self.presets))
         save_config(
             {
                 "presets": self.presets,
+                "language_default_presets": self.language_default_presets,
             }
         )
         tooltip("Settings saved.", parent=self)

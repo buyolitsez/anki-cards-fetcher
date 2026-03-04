@@ -8,6 +8,7 @@ from typing import Dict, Optional
 
 from aqt import mw
 
+from .language_detection import default_language_default_presets, supported_language_codes
 from .logger import get_logger, set_log_level
 
 logger = get_logger(__name__)
@@ -80,6 +81,7 @@ DEFAULT_CONFIG: Dict = {
         }
     ],
     "active_preset_id": DEFAULT_PRESET_ID,
+    "language_default_presets": default_language_default_presets(),
 }
 
 # Add-on id helper (Anki may require the folder name in some versions)
@@ -297,6 +299,23 @@ def normalize_active_preset_id(raw_id, presets: list[Dict]) -> str:
     return DEFAULT_PRESET_ID
 
 
+def normalize_language_default_presets(raw, presets: list[Dict]) -> Dict[str, Optional[str]]:
+    defaults = default_language_default_presets()
+    out: Dict[str, Optional[str]] = defaults.copy()
+    if not isinstance(raw, dict):
+        return out
+
+    existing_ids = {str(preset.get("id") or "").strip() for preset in presets}
+    for code in supported_language_codes():
+        value = raw.get(code)
+        if not isinstance(value, str):
+            continue
+        preset_id = value.strip()
+        if preset_id and preset_id in existing_ids:
+            out[code] = preset_id
+    return out
+
+
 def get_preset_by_id(cfg: Dict, preset_id: Optional[str]) -> Optional[Dict]:
     presets = cfg.get("presets") if isinstance(cfg.get("presets"), list) else []
     for preset in presets:
@@ -366,6 +385,10 @@ def _normalized_config(raw_cfg: Dict) -> Dict:
 
     merged["presets"] = normalize_presets(raw.get("presets"), fallback_payload)
     merged["active_preset_id"] = normalize_active_preset_id(raw.get("active_preset_id"), merged["presets"])
+    merged["language_default_presets"] = normalize_language_default_presets(
+        raw.get("language_default_presets"),
+        merged["presets"],
+    )
     _mirror_active_preset_selection(merged)
 
     merged.pop("source", None)

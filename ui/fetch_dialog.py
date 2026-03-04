@@ -25,6 +25,7 @@ from aqt.utils import showInfo, showWarning, tooltip
 
 from ..config import get_active_preset, get_config, save_config
 from ..fetchers import get_fetcher_by_id, get_fetchers
+from ..language_detection import decide_language_default_preset
 from ..logger import get_logger
 from ..media import download_to_media
 from ..models import Sense
@@ -43,6 +44,7 @@ _MAX_FETCH_WORKERS = 4
 _MAX_TYPO_SUGGEST_WORKERS = 8
 _TYPO_CACHE_LIMIT = 80
 _POLL_INTERVAL_MS = 100
+_AUTO_PRESET_DEBOUNCE_MS = 300
 _SEARCH_STATE_IDLE = "idle"
 _SEARCH_STATE_FETCHING = "fetching"
 _SEARCH_STATE_TYPO = "typo_collecting"
@@ -79,6 +81,11 @@ class FetchDialog(QDialog):
         self._typo_max_results = 12
         self._typo_errors: List[str] = []
         self._typo_cache_key: Optional[Tuple[str, str, int]] = None
+        self._word_lang_timer: Optional[QTimer] = None
+        self._auto_preset_override_locked = False
+        self._auto_switching_preset = False
+        self._last_detected_language: Optional[str] = None
+        self._last_manual_preset_id: Optional[str] = None
         self.setWindowTitle("Cambridge / Wiktionary Fetch")
 
         # widgets
@@ -143,10 +150,12 @@ class FetchDialog(QDialog):
         self.preview_image_btn.clicked.connect(self.on_preview_image)
         self.clear_image_btn.clicked.connect(self.on_clear_image)
         self.preset_combo.currentIndexChanged.connect(self.on_preset_changed)
+        self.word_edit.textChanged.connect(self._on_word_text_changed)
         self.ntype_combo.currentTextChanged.connect(self._remember_selection)
         self.deck_combo.currentTextChanged.connect(self._remember_selection)
         self._update_image_buttons(-1)
         self._set_search_state(_SEARCH_STATE_IDLE)
+        self._last_manual_preset_id = self._active_preset_id()
 
     # ---------- UI helpers ----------
     def _populate_models(self):
@@ -282,14 +291,75 @@ class FetchDialog(QDialog):
         return text or None
 
     def on_preset_changed(self, *_):
+        manual_change = not self._auto_switching_preset
+        manual_change_with_word = manual_change and bool(self.word_edit.text().strip())
         preset_id = self._active_preset_id()
         if not preset_id:
             return
+        if manual_change:
+            self._last_manual_preset_id = preset_id
         save_config({"active_preset_id": preset_id})
         self.cfg = get_config()
         self._populate_presets_combo()
         preset = get_active_preset(self.cfg) or {}
         self._apply_preset_to_controls(preset)
+        if manual_change_with_word:
+            self._auto_preset_override_locked = True
+
+    def _ensure_word_lang_timer(self):
+        if self._word_lang_timer:
+            return
+        self._word_lang_timer = QTimer(self)
+        self._word_lang_timer.setInterval(_AUTO_PRESET_DEBOUNCE_MS)
+        try:
+            self._word_lang_timer.setSingleShot(True)
+        except Exception:
+            pass
+        self._word_lang_timer.timeout.connect(self._on_word_input_debounced)
+
+    def _on_word_text_changed(self, *_):
+        if self._is_fetch_running():
+            return
+        if not self.word_edit.text().strip():
+            self._auto_preset_override_locked = False
+            self._last_detected_language = None
+            if self._word_lang_timer and self._word_lang_timer.isActive():
+                self._word_lang_timer.stop()
+            return
+        self._ensure_word_lang_timer()
+        if not self._word_lang_timer:
+            return
+        self._word_lang_timer.start()
+
+    def _on_word_input_debounced(self):
+        if self._is_fetch_running():
+            return
+        self._maybe_auto_select_preset_for_word()
+
+    def _maybe_auto_select_preset_for_word(self):
+        self.cfg = get_config()
+        decision = decide_language_default_preset(
+            word=self.word_edit.text(),
+            cfg=self.cfg,
+            current_preset_id=self._active_preset_id(),
+            manual_preset_id=self._last_manual_preset_id,
+            override_locked=self._auto_preset_override_locked,
+        )
+        self._last_detected_language = decision.detected_language
+        if decision.clear_override_lock:
+            self._auto_preset_override_locked = False
+            self._last_detected_language = None
+            return
+        if not decision.target_preset_id:
+            return
+        idx = self._find_combo_index_by_data(self.preset_combo, decision.target_preset_id)
+        if idx == -1:
+            return
+        self._auto_switching_preset = True
+        try:
+            self.preset_combo.setCurrentIndex(idx)
+        finally:
+            self._auto_switching_preset = False
 
     def _remember_selection(self, *_):
         if self._applying_preset:
@@ -564,6 +634,9 @@ class FetchDialog(QDialog):
         if self._is_fetch_running():
             self._cancel_search()
             return
+        if self._word_lang_timer and self._word_lang_timer.isActive():
+            self._word_lang_timer.stop()
+        self._maybe_auto_select_preset_for_word()
         self.cfg = get_config()
         word = self.word_edit.text().strip()
         if not word:
@@ -1035,6 +1108,8 @@ class FetchDialog(QDialog):
             logger.exception("Failed to open browser for note %d", nid)
 
     def closeEvent(self, event):  # type: ignore[override]
+        if self._word_lang_timer and self._word_lang_timer.isActive():
+            self._word_lang_timer.stop()
         self._cancel_search()
         # Safety: persist selected note type/deck even if signals were not triggered
         self._remember_selection()
