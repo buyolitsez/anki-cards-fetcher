@@ -27,6 +27,8 @@ from ..image_search import (
     DEFAULT_IMAGE_PROVIDER,
     ImageResult,
     attach_thumbnails,
+    collect_unique_image_batch,
+    dedupe_image_results,
     get_image_provider_choices,
     search_images,
 )
@@ -35,6 +37,8 @@ logger = get_logger(__name__)
 
 
 class ImageSearchDialog(QDialog):
+    _max_load_more_pages = 10
+
     def __init__(self, parent=None, query: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Image search")
@@ -52,6 +56,8 @@ class ImageSearchDialog(QDialog):
         self._thumb_token: int = 0
         self._thumb_in_flight: int = 0
         self._thumb_max_in_flight: int = 4
+        self._seen_image_keys: set[str] = set()
+        self._next_offset: int = 0
 
         # widgets
         self.query_edit = QLineEdit()
@@ -169,20 +175,22 @@ class ImageSearchDialog(QDialog):
                 return
             self._search_in_progress = False
             try:
-                results, used_provider, safe = future.result()
+                raw_results, used_provider, safe = future.result()
             except Exception as e:
                 self._set_busy(False, "")
                 logger.exception("Image search failed")
                 showWarning(f"Image search failed: {e}")
                 return
+            results, seen_keys = dedupe_image_results(raw_results)
             self.last_query = query
             self.last_provider = used_provider
             self.last_safe = safe
+            self._next_offset = len(raw_results)
             if not results:
                 self._set_busy(False, f"No images found ({used_provider}).")
             else:
                 self._set_busy(False, f"Found {len(results)} images.")
-            self._show_results(results)
+            self._show_results(results, seen_keys)
             self._start_thumbnail_jobs(results)
 
         self._run_in_background(task, on_done)
@@ -191,7 +199,7 @@ class ImageSearchDialog(QDialog):
         if not self.last_query:
             showWarning("Run a search first.")
             return
-        offset = len(self.results)
+        offset = self._next_offset
         if offset <= 0:
             showWarning("Run a search first.")
             return
@@ -199,7 +207,7 @@ class ImageSearchDialog(QDialog):
         provider = self.provider_combo.currentData() or self.last_provider or image_cfg.get(
             "provider", DEFAULT_IMAGE_PROVIDER
         )
-        self._set_busy(True, "Loading more images...")
+        self._set_load_more_busy(True, "Loading more images...")
         self._load_token += 1
         token = self._load_token
         self._load_in_progress = True
@@ -207,29 +215,54 @@ class ImageSearchDialog(QDialog):
 
         def task():
             image_cfg = self.cfg.get("image_search", {}) if isinstance(self.cfg.get("image_search"), dict) else {}
-            max_results = int(image_cfg.get("max_results") or 12)
-            results, _, _ = search_images(
-                self.last_query,
-                provider=provider,
-                max_results=max_results,
-                safe_search=self.last_safe,
-                offset=offset,
-                allow_fallback=False,
+            batch_size = int(image_cfg.get("max_results") or 12)
+
+            def fetch_page(page_offset: int, page_limit: int) -> List[ImageResult]:
+                results, _, _ = search_images(
+                    self.last_query,
+                    provider=provider,
+                    max_results=page_limit,
+                    safe_search=self.last_safe,
+                    offset=page_offset,
+                    allow_fallback=False,
+                )
+                return results
+
+            return collect_unique_image_batch(
+                fetch_page,
+                start_offset=offset,
+                batch_size=batch_size,
+                page_size=batch_size,
+                seen_keys=self._seen_image_keys,
+                max_page_requests=self._max_load_more_pages,
             )
-            return results
 
         def on_done(future, token=token):
             if token != self._load_token:
                 return
             self._load_in_progress = False
             try:
-                results = future.result()
+                collect_result = future.result()
             except Exception as e:
-                self._set_busy(False, "")
+                self._set_load_more_busy(False, "")
                 logger.exception("Load more failed")
                 showWarning(f"Load more failed: {e}")
                 return
-            self._set_busy(False, f"Loaded {len(results)} more.")
+            self._next_offset = collect_result.next_offset
+            self._seen_image_keys = collect_result.seen_keys
+            results = collect_result.results
+            if results:
+                if collect_result.exhausted:
+                    status = f"Loaded {len(results)} new images. Search complete."
+                else:
+                    status = f"Loaded {len(results)} new images. Batch complete."
+            elif collect_result.exhausted:
+                status = "Search complete: no more images."
+            elif collect_result.reached_page_limit:
+                status = "Search still in progress: unique images are sparse."
+            else:
+                status = "No new unique images found."
+            self._set_load_more_busy(False, status)
             self._append_results(results)
             self._enqueue_thumbnails(results)
 
@@ -245,8 +278,9 @@ class ImageSearchDialog(QDialog):
     def _run_in_background(self, task, on_done):
         run_in_background(task, on_done)
 
-    def _show_results(self, results: List[ImageResult]):
+    def _show_results(self, results: List[ImageResult], seen_keys: Optional[set[str]] = None):
         self.results = []
+        self._seen_image_keys = set(seen_keys or set())
         self.results_list.clear()
         self._append_results(results)
         if self.results:
@@ -289,10 +323,20 @@ class ImageSearchDialog(QDialog):
 
     def _set_busy(self, busy: bool, text: str):
         self.search_btn.setEnabled(not busy)
+        self.provider_combo.setEnabled(not busy)
+        self.query_edit.setEnabled(not busy)
         self.use_btn.setEnabled(not busy)
         self.load_more_btn.setEnabled(not busy)
         self.reload_thumbs_btn.setEnabled(not busy)
         self.results_list.setEnabled(not busy)
+        self.status_label.setText(text)
+
+    def _set_load_more_busy(self, busy: bool, text: str):
+        self.search_btn.setEnabled(not busy and not self._search_in_progress)
+        self.provider_combo.setEnabled(not busy and not self._search_in_progress)
+        self.query_edit.setEnabled(not busy and not self._search_in_progress)
+        self.load_more_btn.setEnabled(not busy and not self._search_in_progress)
+        self.reload_thumbs_btn.setEnabled(not busy and not self._search_in_progress)
         self.status_label.setText(text)
 
     def _user_role(self):
@@ -333,7 +377,7 @@ class ImageSearchDialog(QDialog):
             return
         self._load_in_progress = False
         self._load_token += 1
-        self._set_busy(False, "Load more timed out.")
+        self._set_load_more_busy(False, "Load more timed out.")
         showWarning("Load more timed out. Try again.")
 
     def _start_thumbnail_jobs(self, results: List[ImageResult]):
@@ -376,5 +420,3 @@ class ImageSearchDialog(QDialog):
                 self._pump_thumbnail_queue(token)
 
             self._run_in_background(task, on_done)
-
-

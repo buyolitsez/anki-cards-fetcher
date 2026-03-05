@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 import base64
-from urllib.parse import unquote_to_bytes, urlencode
+from urllib.parse import unquote_to_bytes, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
@@ -30,6 +30,90 @@ class ImageResult:
     width: Optional[int] = None
     height: Optional[int] = None
     thumb_bytes: Optional[bytes] = None
+
+
+@dataclass
+class ImageBatchCollectResult:
+    results: List[ImageResult]
+    seen_keys: set[str]
+    next_offset: int
+    exhausted: bool
+    reached_page_limit: bool
+
+
+def normalize_image_url_key(url: str) -> str:
+    value = (url or "").strip()
+    if not value:
+        return ""
+    try:
+        parts = urlsplit(value)
+    except Exception:
+        return value
+    if not parts.scheme and not parts.netloc:
+        return value
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
+
+
+def image_result_unique_key(result: ImageResult) -> str:
+    return normalize_image_url_key(result.image_url or result.thumb_url or "")
+
+
+def dedupe_image_results(
+    results: List[ImageResult],
+    seen_keys: Optional[set[str]] = None,
+) -> tuple[List[ImageResult], set[str]]:
+    seen: set[str] = set(seen_keys or set())
+    unique: List[ImageResult] = []
+    for result in results:
+        key = image_result_unique_key(result)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(result)
+    return unique, seen
+
+
+def collect_unique_image_batch(
+    fetch_page: Callable[[int, int], List[ImageResult]],
+    *,
+    start_offset: int,
+    batch_size: int,
+    page_size: int,
+    seen_keys: Optional[set[str]] = None,
+    max_page_requests: int = 10,
+) -> ImageBatchCollectResult:
+    offset = max(0, int(start_offset or 0))
+    target_count = max(1, int(batch_size or 1))
+    max_page_size = max(1, int(page_size or target_count))
+    max_requests = max(1, int(max_page_requests or 1))
+    seen = set(seen_keys or set())
+    unique_results: List[ImageResult] = []
+    exhausted = False
+    requests_done = 0
+
+    while len(unique_results) < target_count and requests_done < max_requests:
+        requests_done += 1
+        remaining = target_count - len(unique_results)
+        limit = min(max_page_size, max(1, remaining))
+        page = fetch_page(offset, limit) or []
+        page_len = len(page)
+        if page_len <= 0:
+            exhausted = True
+            break
+        offset += page_len
+        new_unique, seen = dedupe_image_results(page, seen)
+        unique_results.extend(new_unique)
+        if page_len < limit:
+            exhausted = True
+            break
+
+    return ImageBatchCollectResult(
+        results=unique_results,
+        seen_keys=seen,
+        next_offset=offset,
+        exhausted=exhausted,
+        reached_page_limit=(not exhausted and len(unique_results) < target_count and requests_done >= max_requests),
+    )
 
 
 def get_image_provider_choices() -> Tuple[Tuple[str, str], ...]:
