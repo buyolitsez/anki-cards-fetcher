@@ -96,6 +96,7 @@ class ImageSearchDialog(QDialog):
         self.load_more_btn = QPushButton("Load more")
         self.reload_thumbs_btn = QPushButton("Reload thumbnails")
         self.cancel_btn = QPushButton("Cancel")
+        self._configure_default_buttons()
 
         # layout
         top = QHBoxLayout()
@@ -128,6 +129,17 @@ class ImageSearchDialog(QDialog):
 
         if self.query_edit.text().strip():
             self.on_search()
+
+    def _configure_default_buttons(self):
+        for btn in (self.use_btn, self.load_more_btn, self.reload_thumbs_btn, self.cancel_btn):
+            if hasattr(btn, "setAutoDefault"):
+                btn.setAutoDefault(False)
+            if hasattr(btn, "setDefault"):
+                btn.setDefault(False)
+        if hasattr(self.search_btn, "setAutoDefault"):
+            self.search_btn.setAutoDefault(True)
+        if hasattr(self.search_btn, "setDefault"):
+            self.search_btn.setDefault(True)
 
     def accept_selected(self):
         item = self.results_list.currentItem()
