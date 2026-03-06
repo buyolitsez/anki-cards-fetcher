@@ -1,6 +1,6 @@
 {
-  "note_type": "мои слова",
-  "deck": "русский",
+  "note_type": "english ivantea kolya",
+  "deck": "english (Ivantea, Kolya)",
   "remember_last": true,
   "field_map": {
     "word": [
@@ -47,7 +47,8 @@
   "max_examples": 3,
   "max_synonyms": 4,
   "sources": [
-    "wiktionary"
+    "cambridge",
+    "wiktionary_en"
   ],
   "image_search": {
     "provider": "duckduckgo",
@@ -190,7 +191,7 @@
       "log_level": "DEBUG"
     }
   ],
-  "active_preset_id": "ru",
+  "active_preset_id": "default",
   "language_default_presets": {
     "en": "default",
     "ru": "ru"

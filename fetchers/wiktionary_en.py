@@ -14,6 +14,8 @@ from .wiktionary_common import BaseWiktionaryFetcher
 logger = get_logger(__name__)
 
 HEADING_TAGS = ("h2", "h3", "h4", "h5", "h6")
+_KEEP_FORMAT_TAGS = frozenset({"i", "em", "b", "strong"})
+
 POS_TITLES = {
     "noun", "proper noun", "verb", "adjective", "adverb", "pronoun",
     "determiner", "preposition", "conjunction", "interjection", "numeral",
@@ -197,7 +199,21 @@ class EnglishWiktionaryFetcher(BaseWiktionaryFetcher):
             child.decompose()
         for sup in li_copy.find_all("sup"):
             sup.decompose()
-        return self._clean_text(li_copy.get_text(" ", strip=True))
+        # Keep _KEEP_FORMAT_TAGS for formatting; unwrap everything else
+        # (removes links but preserves their text, and unwraps structural spans)
+        for tag in li_copy.find_all(True):
+            if tag.name in _KEEP_FORMAT_TAGS:
+                tag.attrs = {}
+            else:
+                try:
+                    tag.unwrap()
+                except Exception:
+                    pass
+        html = li_copy.decode_contents()
+        html = re.sub(r"\[\d+\]", "", html)  # remove citation markers [1]
+        html = re.sub(r"\s+", " ", html)  # collapse all whitespace (incl. newlines)
+        html = re.sub(r" +([.,;:!?])", r"\1", html)  # no space before punctuation
+        return html.strip()
 
     def _extract_examples(self, li) -> List[str]:
         examples: List[str] = []

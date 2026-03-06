@@ -8,6 +8,61 @@ from bs4 import BeautifulSoup
 from cambridge_fetch.fetchers.wiktionary_en import EnglishWiktionaryFetcher
 
 
+def test_extract_definition_qualifier_spacing():
+    """Qualifier brackets like (fandom slang) should not get extra spaces."""
+    html = """
+    <html><body>
+      <h2><span class="mw-headline" id="English">English</span></h2>
+      <h3><span class="mw-headline" id="Noun">Noun</span></h3>
+      <ol>
+        <li><span class="usage-notes"><span class="qualifier-brac">(</span><span class="qualifier-content"><a href="/wiki/fandom">fandom</a> <a href="/wiki/slang">slang</a></span><span class="qualifier-brac">)</span></span> One with an <a href="/wiki/obsessive">obsessive</a> interest in something.</li>
+      </ol>
+    </body></html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    fetcher = EnglishWiktionaryFetcher({})
+    lang = fetcher._find_language_section(soup)
+    senses = fetcher._parse_senses(lang)
+
+    assert senses
+    defn = senses[0].definition
+    # No extra spaces around parentheses
+    assert "( " not in defn
+    assert " )" not in defn
+    assert "(fandom slang)" in defn
+    # No HTML links
+    assert "<a" not in defn
+    assert "href" not in defn
+    # Word content preserved
+    assert "obsessive" in defn
+
+
+def test_extract_definition_preserves_formatting():
+    """<i> and <b> tags in definitions are kept; <a> links are stripped."""
+    html = """
+    <html><body>
+      <h2><span class="mw-headline" id="English">English</span></h2>
+      <h3><span class="mw-headline" id="Noun">Noun</span></h3>
+      <ol>
+        <li><i>(<a href="/wiki/informal">informal</a>)</i> A <b>cool</b> <a href="/wiki/thing">thing</a>.</li>
+      </ol>
+    </body></html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    fetcher = EnglishWiktionaryFetcher({})
+    lang = fetcher._find_language_section(soup)
+    senses = fetcher._parse_senses(lang)
+
+    assert senses
+    defn = senses[0].definition
+    assert "<i>" in defn  # italic preserved
+    assert "<b>" in defn  # bold preserved
+    assert "<a" not in defn  # links removed
+    assert "informal" in defn
+    assert "cool" in defn
+    assert "thing" in defn
+
+
 def test_wiktionary_en_basic_parse():
     html = """
     <html><body>
