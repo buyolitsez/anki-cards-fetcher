@@ -15,6 +15,7 @@ from aqt.qt import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +29,51 @@ from ..logger import get_logger
 from .source_utils import ensure_source_selection, set_source_selection
 
 logger = get_logger(__name__)
+
+
+class FieldPickerRow(QWidget):
+    """A QLineEdit paired with a dropdown to pick field names from the note type."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.edit = QLineEdit()
+        self.picker = QComboBox()
+        self.picker.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.picker.setMinimumWidth(140)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.edit, stretch=3)
+        layout.addWidget(self.picker, stretch=1)
+
+        self.picker.activated.connect(self._on_field_selected)
+        self.set_fields([])
+
+    def text(self) -> str:
+        return self.edit.text()
+
+    def setText(self, text: str):
+        self.edit.setText(text)
+
+    def set_fields(self, field_names):
+        self.picker.blockSignals(True)
+        self.picker.clear()
+        self.picker.addItem("+ add field…", "")
+        for name in field_names:
+            self.picker.addItem(name, name)
+        self.picker.blockSignals(False)
+        self.picker.setEnabled(bool(field_names))
+
+    def _on_field_selected(self, index: int):
+        data = self.picker.itemData(index)
+        if not data:
+            return
+        current = self.edit.text().strip()
+        parts = [v.strip() for v in current.split(",") if v.strip()]
+        if data not in parts:
+            parts.append(data)
+        self.edit.setText(", ".join(parts))
+        self.picker.setCurrentIndex(0)
 
 
 class SettingsDialog(QDialog):
@@ -69,6 +115,7 @@ class SettingsDialog(QDialog):
         self.ntype_combo.addItem("Auto (first in list)", "")
         for name in col.models.allNames():
             self.ntype_combo.addItem(name, name)
+        self.ntype_combo.currentIndexChanged.connect(self._refresh_field_pickers)
 
         # deck selector (preset-scoped)
         self.deck_combo = QComboBox()
@@ -200,7 +247,7 @@ class SettingsDialog(QDialog):
         form.addWidget(self.log_level_combo)
 
         # field mappings
-        form.addWidget(QLabel("Field mapping (comma-separated per logical key):"))
+        form.addWidget(QLabel("Field mapping (type or pick from dropdown; comma-separated):"))
         self.map_edits = {}
         for key, label in [
             ("word", "Word fields"),
@@ -213,7 +260,7 @@ class SettingsDialog(QDialog):
             ("picture", "Picture fields"),
         ]:
             form.addWidget(QLabel(label + ":"))
-            edit = QLineEdit()
+            edit = FieldPickerRow()
             vals = self.cfg.get("field_map", {}).get(key, [])
             if isinstance(vals, str):
                 vals = [v.strip() for v in vals.split(",") if v.strip()]
@@ -227,7 +274,7 @@ class SettingsDialog(QDialog):
             ("syllables", "Syllables/stress fields"),
         ]:
             form.addWidget(QLabel(label + ":"))
-            edit = QLineEdit()
+            edit = FieldPickerRow()
             vals = (self.cfg.get("wiktionary", {}).get("field_map", {}).get(key, []) or [])
             if isinstance(vals, str):
                 vals = [v.strip() for v in vals.split(",") if v.strip()]
@@ -439,6 +486,23 @@ class SettingsDialog(QDialog):
             return
         preset.update(self._current_preset_payload())
 
+    def _get_fields_for_note_type(self, note_type_name: str) -> list:
+        if not note_type_name or not mw or not mw.col:
+            return []
+        model = mw.col.models.byName(note_type_name)
+        if not model:
+            return []
+        return [f["name"] for f in model.get("flds", [])]
+
+    def _refresh_field_pickers(self):
+        if not hasattr(self, "map_edits") or not hasattr(self, "wiki_map_edits"):
+            return
+        note_type_name = self.ntype_combo.currentData() or ""
+        fields = self._get_fields_for_note_type(note_type_name)
+        all_rows = list(self.map_edits.values()) + list(self.wiki_map_edits.values())
+        for row in all_rows:
+            row.set_fields(fields)
+
     def _load_preset_into_controls(self, preset_id: Optional[str]):
         preset = self._preset_by_id(preset_id)
         if not preset:
@@ -448,6 +512,7 @@ class SettingsDialog(QDialog):
             self._apply_preset_payload(preset)
         finally:
             self._loading_preset = False
+        self._refresh_field_pickers()
 
     def _populate_preset_combo(self, select_id: Optional[str] = None):
         self._ensure_presets()
