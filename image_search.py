@@ -12,6 +12,7 @@ from urllib.error import HTTPError
 from .exceptions import FetchError
 from .http_client import USER_AGENT, require_requests
 from .logger import get_logger
+from .media import resolve_media_url
 
 logger = get_logger(__name__)
 
@@ -166,8 +167,15 @@ def attach_thumbnails(
             if data:
                 res.thumb_bytes = data
             continue
+        # Resolve protocol-relative or root-relative URLs using the source URL as base
+        url = resolve_media_url(url, referer=res.source_url)
+        if not url:
+            continue
+        req_headers = dict(headers)
+        if res.source_url:
+            req_headers["Referer"] = res.source_url
         try:
-            resp = requests.get(url, headers=headers, timeout=timeout)
+            resp = requests.get(url, headers=req_headers, timeout=timeout)
             if resp.status_code >= 400:
                 continue
             content = resp.content or b""

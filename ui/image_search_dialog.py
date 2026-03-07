@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from aqt.qt import (
     QAbstractItemView,
+    QColor,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -39,10 +40,11 @@ logger = get_logger(__name__)
 class ImageSearchDialog(QDialog):
     _max_load_more_pages = 10
 
-    def __init__(self, parent=None, query: str = ""):
+    def __init__(self, parent=None, query: str = "", dict_images: Optional[List[ImageResult]] = None):
         super().__init__(parent)
         self.setWindowTitle("Image search")
         self.cfg = get_config()
+        self._dict_images: List[ImageResult] = list(dict_images or [])
         self.results: List[ImageResult] = []
         self.selected: Optional[ImageResult] = None
         self.last_query: str = ""
@@ -127,6 +129,8 @@ class ImageSearchDialog(QDialog):
         self.reload_thumbs_btn.clicked.connect(self.on_reload_thumbs)
         self.cancel_btn.clicked.connect(self.reject)
 
+        self._prepend_dict_image()
+
         if self.query_edit.text().strip():
             self.on_search()
 
@@ -203,7 +207,7 @@ class ImageSearchDialog(QDialog):
             else:
                 self._set_busy(False, f"Found {len(results)} images.")
             self._show_results(results, seen_keys)
-            self._start_thumbnail_jobs(results)
+            self._enqueue_thumbnails(results, reset=True)
 
         self._run_in_background(task, on_done)
 
@@ -294,8 +298,9 @@ class ImageSearchDialog(QDialog):
         self.results = []
         self._seen_image_keys = set(seen_keys or set())
         self.results_list.clear()
+        self._prepend_dict_image()
         self._append_results(results)
-        if self.results:
+        if self.results_list.count():
             self.results_list.setCurrentRow(0)
         else:
             tooltip("No images found.", parent=self)
@@ -317,6 +322,23 @@ class ImageSearchDialog(QDialog):
         item.setText(str(index + 1))
         item.setSizeHint(QSize(180, 200))
         return item
+
+    def _prepend_dict_image(self):
+        to_fetch = []
+        for idx, res in enumerate(self._dict_images):
+            item = QListWidgetItem()
+            item.setData(self._user_role(), res)
+            self._apply_icon(item, res)
+            label = res.title or "Dictionary"
+            item.setText(label)
+            item.setSizeHint(QSize(180, 200))
+            item.setBackground(QColor(255, 235, 130))
+            item.setToolTip(f"[From dictionary] {label}")
+            self.results_list.insertItem(idx, item)
+            if not res.thumb_bytes:
+                to_fetch.append(res)
+        if to_fetch:
+            self._enqueue_thumbnails(to_fetch)
 
     def _apply_icon(self, item: QListWidgetItem, res: ImageResult):
         if res.thumb_bytes:
@@ -391,12 +413,6 @@ class ImageSearchDialog(QDialog):
         self._load_token += 1
         self._set_load_more_busy(False, "Load more timed out.")
         showWarning("Load more timed out. Try again.")
-
-    def _start_thumbnail_jobs(self, results: List[ImageResult]):
-        self._thumb_token += 1
-        self._thumb_in_flight = 0
-        self._thumb_queue = [r for r in results if not r.thumb_bytes]
-        self._pump_thumbnail_queue(self._thumb_token)
 
     def _enqueue_thumbnails(self, results: List[ImageResult], reset: bool = False):
         if reset:

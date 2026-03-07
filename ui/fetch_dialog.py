@@ -30,6 +30,7 @@ from ..logger import get_logger
 from ..media import download_to_media
 from ..models import Sense
 from ..typo import TypoCollectResult, collect_typo_suggestions
+from ..image_search import ImageResult
 from .image_search_dialog import ImageSearchDialog
 from .picture_preview_dialog import PicturePreviewDialog
 from .source_utils import configured_source_ids, ensure_source_selection, set_source_selection
@@ -861,11 +862,28 @@ class FetchDialog(QDialog):
         if not query:
             showWarning("Enter a word first.")
             return
-        dlg = ImageSearchDialog(self, query=query)
+        # Collect unique dict images from all senses, labelled by source
+        seen_urls: set = set()
+        dict_images: List[ImageResult] = []
+        for i, s in enumerate(self.senses):
+            if not s.picture_url or s.picture_url in seen_urls:
+                continue
+            seen_urls.add(s.picture_url)
+            source_id = self.sense_sources[i] if i < len(self.sense_sources) else ""
+            fetcher = get_fetcher_by_id(source_id, self.cfg) if source_id else None
+            label = fetcher.LABEL if fetcher else "Dictionary"
+            dict_images.append(ImageResult(
+                image_url=s.picture_url,
+                thumb_url=s.picture_thumb_url,
+                source_url=s.picture_referer,
+                title=label,
+                thumb_bytes=s.picture_thumb_bytes,
+            ))
+        sense = self.senses[row]
+        dlg = ImageSearchDialog(self, query=query, dict_images=dict_images)
         if dlg.exec():
             if not dlg.selected:
                 return
-            sense = self.senses[row]
             sense.picture_url = dlg.selected.image_url
             sense.picture_referer = dlg.selected.source_url
             sense.picture_thumb_url = dlg.selected.thumb_url

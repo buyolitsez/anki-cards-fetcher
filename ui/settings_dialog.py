@@ -394,7 +394,7 @@ class SettingsDialog(QDialog):
         return None
 
     @staticmethod
-    def _collect_mapping_from_edits(edits: Dict[str, QLineEdit], defaults: Dict[str, List[str]]) -> Dict[str, List[str]]:
+    def _collect_mapping_from_edits(edits: Dict[str, FieldPickerRow], defaults: Dict[str, List[str]]) -> Dict[str, List[str]]:
         out: Dict[str, List[str]] = {}
         for key, edit in edits.items():
             vals = [v.strip() for v in edit.text().split(",") if v.strip()]
@@ -405,7 +405,7 @@ class SettingsDialog(QDialog):
         return out
 
     @staticmethod
-    def _apply_mapping_to_edits(edits: Dict[str, QLineEdit], values: Dict, defaults: Dict[str, List[str]]):
+    def _apply_mapping_to_edits(edits: Dict[str, FieldPickerRow], values: Dict, defaults: Dict[str, List[str]]):
         for key, edit in edits.items():
             vals = values.get(key, defaults.get(key, []))
             if isinstance(vals, str):
