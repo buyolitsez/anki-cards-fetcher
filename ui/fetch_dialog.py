@@ -31,6 +31,7 @@ from ..media import download_to_media, save_bytes_to_media
 from ..models import Sense
 from ..typo import TypoCollectResult, collect_typo_suggestions
 from ..image_search import ImageResult
+from .duplicate_utils import configured_word_fields, find_duplicate_note_ids
 from .image_search_dialog import ImageSearchDialog
 from .picture_preview_dialog import PicturePreviewDialog
 from .source_utils import configured_source_ids, ensure_source_selection, set_source_selection
@@ -83,6 +84,7 @@ class FetchDialog(QDialog):
         self._typo_errors: List[str] = []
         self._typo_cache_key: Optional[Tuple[str, str, int]] = None
         self._word_lang_timer: Optional[QTimer] = None
+        self._duplicate_timer: Optional[QTimer] = None
         self._auto_preset_override_locked = False
         self._auto_switching_preset = False
         self._last_detected_language: Optional[str] = None
@@ -93,6 +95,10 @@ class FetchDialog(QDialog):
         self.word_edit = QLineEdit()
         self.word_edit.setPlaceholderText("Enter a word…")
         self.fetch_btn = QPushButton("Fetch")
+        self.duplicate_label = QLabel("")
+        self.duplicate_label.setWordWrap(True)
+        self.duplicate_label.setStyleSheet("color: #8c5a00;")
+        self.duplicate_label.setVisible(False)
         self.sense_list = QListWidget()
         self.preview = QTextEdit()
         self.preview.setReadOnly(True)
@@ -135,6 +141,7 @@ class FetchDialog(QDialog):
 
         main = QVBoxLayout()
         main.addLayout(top)
+        main.addWidget(self.duplicate_label)
         main.addLayout(self.source_row)
         main.addLayout(combos)
         main.addLayout(body)
@@ -157,6 +164,7 @@ class FetchDialog(QDialog):
         self._update_image_buttons(-1)
         self._set_search_state(_SEARCH_STATE_IDLE)
         self._last_manual_preset_id = self._active_preset_id()
+        self._schedule_duplicate_check()
 
     # ---------- UI helpers ----------
     def _populate_models(self):
@@ -306,6 +314,7 @@ class FetchDialog(QDialog):
         self._apply_preset_to_controls(preset)
         if manual_change_with_word:
             self._auto_preset_override_locked = True
+        self._schedule_duplicate_check()
 
     def _ensure_word_lang_timer(self):
         if self._word_lang_timer:
@@ -326,11 +335,15 @@ class FetchDialog(QDialog):
             self._last_detected_language = None
             if self._word_lang_timer and self._word_lang_timer.isActive():
                 self._word_lang_timer.stop()
+            if self._duplicate_timer and self._duplicate_timer.isActive():
+                self._duplicate_timer.stop()
+            self._set_duplicate_status([])
             return
         self._ensure_word_lang_timer()
         if not self._word_lang_timer:
             return
         self._word_lang_timer.start()
+        self._schedule_duplicate_check()
 
     def _on_word_input_debounced(self):
         if self._is_fetch_running():
@@ -364,11 +377,13 @@ class FetchDialog(QDialog):
 
     def _remember_selection(self, *_):
         if self._applying_preset:
+            self._schedule_duplicate_check()
             return
         source_ids = self._selected_source_ids()
         if not self._is_fetch_running():
             self._reset_source_statuses()
         if not self.cfg.get("remember_last", True):
+            self._schedule_duplicate_check()
             return
         updates = {
             "note_type": self._selected_note_type(),
@@ -381,6 +396,7 @@ class FetchDialog(QDialog):
         save_config(updates)
         self.cfg = get_config()
         self._populate_presets_combo()
+        self._schedule_duplicate_check()
 
     def _selected_source_ids(self) -> List[str]:
         return ensure_source_selection(self.source_checks)
@@ -419,6 +435,62 @@ class FetchDialog(QDialog):
         else:
             self._update_image_buttons(self.sense_list.currentRow())
         self.fetch_btn.setEnabled(True)
+
+    def _ensure_duplicate_timer(self):
+        if self._duplicate_timer:
+            return
+        self._duplicate_timer = QTimer(self)
+        self._duplicate_timer.setInterval(_AUTO_PRESET_DEBOUNCE_MS)
+        try:
+            self._duplicate_timer.setSingleShot(True)
+        except Exception:
+            pass
+        self._duplicate_timer.timeout.connect(self._refresh_duplicate_status)
+
+    def _schedule_duplicate_check(self):
+        if self._is_fetch_running():
+            return
+        self._ensure_duplicate_timer()
+        if self._duplicate_timer:
+            self._duplicate_timer.start()
+
+    def _set_duplicate_status(self, note_ids: List[int]):
+        if not note_ids:
+            self.duplicate_label.clear()
+            self.duplicate_label.setToolTip("")
+            self.duplicate_label.setVisible(False)
+            return
+        count = len(note_ids)
+        noun = "note" if count == 1 else "notes"
+        self.duplicate_label.setText(f"Already in selected deck/note type: {count} {noun}.")
+        preview_ids = ", ".join(str(note_id) for note_id in note_ids[:5])
+        more = f" (+{count - 5} more)" if count > 5 else ""
+        self.duplicate_label.setToolTip(f"Matching note IDs: {preview_ids}{more}")
+        self.duplicate_label.setVisible(True)
+
+    def _refresh_duplicate_status(self):
+        if self._is_fetch_running():
+            return
+        word = self.word_edit.text().strip()
+        deck_name = self._selected_deck()
+        note_type_name = self._selected_note_type()
+        word_fields = configured_word_fields(self.cfg.get("field_map", {}))
+        if not word or not deck_name or not note_type_name or not word_fields:
+            self._set_duplicate_status([])
+            return
+        try:
+            note_ids = find_duplicate_note_ids(
+                mw.col,
+                deck_name=deck_name,
+                note_type_name=note_type_name,
+                field_names=word_fields,
+                word=word,
+            )
+        except Exception:
+            logger.exception("Duplicate check failed for word '%s'", word)
+            self._set_duplicate_status([])
+            return
+        self._set_duplicate_status(note_ids)
 
     def _set_source_status(self, source_id: str, state: str, count: int = 0):
         label = self.source_status_labels.get(source_id)
@@ -608,6 +680,7 @@ class FetchDialog(QDialog):
 
         if self._cancel_event.is_set():
             self._set_search_state(_SEARCH_STATE_IDLE)
+            self._schedule_duplicate_check()
             return
 
         if not self.senses:
@@ -619,6 +692,7 @@ class FetchDialog(QDialog):
         if errors:
             tooltip("Some sources failed:\n" + "\n".join(errors[:3]), parent=self)
         self._set_search_state(_SEARCH_STATE_IDLE)
+        self._schedule_duplicate_check()
 
     def _resolve_field_map(self, source_id: str) -> Dict[str, List[str]]:
         base_map = self.cfg.get("field_map", {})
@@ -1140,6 +1214,8 @@ class FetchDialog(QDialog):
     def closeEvent(self, event):  # type: ignore[override]
         if self._word_lang_timer and self._word_lang_timer.isActive():
             self._word_lang_timer.stop()
+        if self._duplicate_timer and self._duplicate_timer.isActive():
+            self._duplicate_timer.stop()
         self._cancel_search()
         # Safety: persist selected note type/deck even if signals were not triggered
         self._remember_selection()
