@@ -3,9 +3,9 @@
 An Anki add-on that fills notes with data from Cambridge Dictionary, ru.wiktionary.org, and en.wiktionary.org.
 
 ## Screenshots
-<img src="https://github.com/buyolitsez/anki-cards-fetcher/blob/main/examples/basic_usage.png?raw=1" alt="Basic usage dialog" width="460">
+<img src="https://raw.githubusercontent.com/buyolitsez/anki-cards-fetcher/main/examples/basic_usage.png" alt="Basic usage dialog" width="460">
 <br>
-<img src="https://github.com/buyolitsez/anki-cards-fetcher/blob/main/examples/image_finder.png?raw=1" alt="Image finder dialog" width="460">
+<img src="https://raw.githubusercontent.com/buyolitsez/anki-cards-fetcher/main/examples/image_finder.png" alt="Image finder dialog" width="460">
 
 ## Features
 - Fetches word, definitions, examples, synonyms, and part of speech.
@@ -41,4 +41,3 @@ Available options:
 - typo suggestions on/off and max number of confirmed suggestions;
 - field mapping (`word`, `definition`, `examples`, `synonyms`, `pos`, `ipa`, `audio`, `picture`);
 - RU Wiktionary mapping (`wiktionary.field_map.syllables`).
-
