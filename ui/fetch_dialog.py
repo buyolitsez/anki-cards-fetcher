@@ -27,7 +27,7 @@ from ..config import get_active_preset, get_config, save_config
 from ..fetchers import get_fetcher_by_id, get_fetchers
 from ..language_detection import decide_language_default_preset
 from ..logger import get_logger
-from ..media import download_to_media
+from ..media import download_to_media, save_bytes_to_media
 from ..models import Sense
 from ..typo import TypoCollectResult, collect_typo_suggestions
 from ..image_search import ImageResult
@@ -1057,7 +1057,19 @@ class FetchDialog(QDialog):
                 pic_tag = f'<img src="{fname}">'
             except Exception as e:
                 logger.error("Image download failed: %s (url=%s)", e, sense.picture_url)
-                showWarning(f"Image download failed: {e}")
+                if sense.picture_thumb_bytes:
+                    try:
+                        fname, _ = save_bytes_to_media(
+                            sense.picture_thumb_bytes,
+                            sense.picture_thumb_url or sense.picture_url,
+                            "image/*",
+                        )
+                        pic_tag = f'<img src="{fname}">'
+                    except Exception as thumb_err:
+                        logger.error("Thumbnail fallback save failed: %s (url=%s)", thumb_err, sense.picture_url)
+                        showWarning(f"Image download failed: {e}")
+                else:
+                    showWarning(f"Image download failed: {e}")
         set_field("picture", pic_tag)
 
     @staticmethod

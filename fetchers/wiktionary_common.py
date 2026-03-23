@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
-from urllib.parse import quote
+from typing import List, Optional, Tuple
+from urllib.parse import quote, urlsplit
 
 from ..exceptions import FetchError
 from ..http_client import USER_AGENT, require_bs4, require_requests
@@ -136,11 +136,13 @@ class BaseWiktionaryFetcher(BaseFetcher):
             return []
 
         senses = self._parse_senses(lang_root)
-        picture = self._extract_picture(lang_root)
+        picture, picture_thumb = self._extract_picture_data(lang_root)
         if picture:
             for s in senses:
                 if not s.picture_url:
                     s.picture_url = picture
+                if not s.picture_thumb_url:
+                    s.picture_thumb_url = picture_thumb
                 if not s.picture_referer:
                     s.picture_referer = self.WIKI_REFERER
         logger.info("%s: found %d senses for '%s'", self.LABEL, len(senses), word)
@@ -207,16 +209,17 @@ class BaseWiktionaryFetcher(BaseFetcher):
 
     # --- shared picture extraction ------------------------------------------
 
-    def _extract_picture(self, lang_root) -> Optional[str]:
-        """Pick a representative image from the language section."""
+    def _extract_picture_data(self, lang_root) -> Tuple[Optional[str], Optional[str]]:
+        """Pick representative Wikimedia image URLs as (full_url, thumb_url)."""
         if not lang_root:
-            return None
+            return None, None
         for img in lang_root.find_all("img"):
             src = img.get("src") or img.get("data-src") or ""
             if not src:
                 continue
             src = src.split(",")[0].split()[0]
-            if any(bad in src.lower() for bad in _IMAGE_BLACKLIST):
+            src_l = src.lower()
+            if any(bad in src_l for bad in _IMAGE_BLACKLIST):
                 continue
             if "upload.wikimedia.org" not in src and "wikimedia.org" not in src:
                 continue
@@ -227,5 +230,22 @@ class BaseWiktionaryFetcher(BaseFetcher):
                 width = height = 0
             if width and height and (width < _MIN_IMAGE_SIZE or height < _MIN_IMAGE_SIZE):
                 continue
-            return normalize_wikimedia_image_url(src)
-        return None
+            thumb_url = self._normalize_url(src)
+            return normalize_wikimedia_image_url(thumb_url), thumb_url
+        return None, None
+
+    def _extract_picture(self, lang_root) -> Optional[str]:
+        picture_url, _thumb_url = self._extract_picture_data(lang_root)
+        return picture_url
+
+    def _normalize_url(self, url: str) -> str:
+        raw = (url or "").strip()
+        if not raw:
+            return ""
+        if raw.startswith("//"):
+            return "https:" + raw
+        if raw.startswith("/"):
+            ref = urlsplit(self.WIKI_REFERER or "")
+            if ref.scheme and ref.netloc:
+                return f"{ref.scheme}://{ref.netloc}{raw}"
+        return raw

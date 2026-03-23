@@ -81,6 +81,17 @@ def _download_with_requests(url: str, headers: dict, referer: Optional[str] = No
     return resp, request_url
 
 
+def save_bytes_to_media(content: bytes, source_url: str, content_type: str = "") -> Tuple[str, str]:
+    """Persist already-fetched media bytes into Anki media."""
+    if not content:
+        raise MediaDownloadError("No media bytes to save")
+    name = _derive_media_name(source_url, content_type)
+    filename = mw.col.media.writeData(name, content)
+    path = mw.col.media.dir() + "/" + filename
+    logger.debug("Media bytes saved as '%s' (%d bytes)", filename, len(content))
+    return filename, path
+
+
 def download_to_media(
     url: str,
     referer: Optional[str] = "https://dictionary.cambridge.org/",

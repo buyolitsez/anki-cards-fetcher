@@ -13,6 +13,7 @@ from .exceptions import FetchError
 from .http_client import USER_AGENT, require_requests
 from .logger import get_logger
 from .media import resolve_media_url
+from .wikimedia_urls import normalize_wikimedia_image_url
 
 logger = get_logger(__name__)
 
@@ -175,7 +176,13 @@ def attach_thumbnails(
         if res.source_url:
             req_headers["Referer"] = res.source_url
         try:
-            resp = requests.get(url, headers=req_headers, timeout=timeout)
+            request_url = url
+            resp = requests.get(request_url, headers=req_headers, timeout=timeout)
+            if resp.status_code == 429:
+                fallback_url = normalize_wikimedia_image_url(request_url)
+                if fallback_url != request_url:
+                    request_url = fallback_url
+                    resp = requests.get(request_url, headers=req_headers, timeout=timeout)
             if resp.status_code >= 400:
                 continue
             content = resp.content or b""

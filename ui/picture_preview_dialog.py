@@ -39,6 +39,7 @@ class PicturePreviewDialog(QDialog):
         self.picture_thumb_url = picture_thumb_url
         self.picture_thumb_bytes = picture_thumb_bytes
         self._pixmap: Optional[QPixmap] = None
+        self._closed: bool = False
 
         self.setWindowTitle("Picture preview")
         self.resize(760, 560)
@@ -121,6 +122,8 @@ class PicturePreviewDialog(QDialog):
             raise RuntimeError(msg)
 
         def on_done(future):
+            if self._closed:
+                return
             try:
                 content, content_type, resolved_url, source_kind = future.result()
             except Exception as e:
@@ -145,6 +148,10 @@ class PicturePreviewDialog(QDialog):
             )
 
         run_in_background(task, on_done)
+
+    def done(self, result: int):  # type: ignore[override]
+        self._closed = True
+        super().done(result)
 
     def _apply_scaled_pixmap(self):
         if not self._pixmap:

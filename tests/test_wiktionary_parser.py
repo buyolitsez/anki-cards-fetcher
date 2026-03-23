@@ -121,3 +121,25 @@ def test_wiktionary_uses_wiktionary_example_highlight_markup():
     senses = fetcher._parse_senses(lang)
     assert len(senses) == 1
     assert senses[0].examples == ["Исполи́н стоял у <b>реки</b>."]
+
+
+def test_wiktionary_extract_picture_data_normalizes_protocol_relative_thumb():
+    html = """
+    <html><body>
+      <section aria-labelledby="Русский">
+        <img
+          src="//upload.wikimedia.org/wikipedia/commons/thumb/1/12/House.jpg/220px-House.jpg"
+          data-file-width="1200"
+          data-file-height="900"
+        >
+      </section>
+    </body></html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    fetcher = _make_fetcher()
+    lang = fetcher._find_language_section(soup)
+
+    picture_url, thumb_url = fetcher._extract_picture_data(lang)
+
+    assert picture_url == "https://upload.wikimedia.org/wikipedia/commons/1/12/House.jpg"
+    assert thumb_url == "https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/House.jpg/220px-House.jpg"

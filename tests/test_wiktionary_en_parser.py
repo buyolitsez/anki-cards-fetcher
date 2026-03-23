@@ -103,3 +103,26 @@ def test_wiktionary_en_basic_parse():
     assert sense.ipa.get("us") == "/haʊs/"
     assert sense.audio_urls.get("us")
     assert picture and "upload.wikimedia.org" in picture
+
+
+def test_wiktionary_en_extract_picture_data_preserves_thumbnail_url():
+    html = """
+    <html><body>
+      <h2><span class="mw-headline" id="English">English</span></h2>
+      <h3><span class="mw-headline" id="Noun">Noun</span></h3>
+      <img
+        src="//upload.wikimedia.org/wikipedia/commons/thumb/1/12/House.jpg/220px-House.jpg"
+        data-file-width="1200"
+        data-file-height="900"
+      >
+      <h2><span class="mw-headline" id="Spanish">Spanish</span></h2>
+    </body></html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    fetcher = EnglishWiktionaryFetcher({})
+    lang = fetcher._find_language_section(soup)
+
+    picture_url, thumb_url = fetcher._extract_picture_data(lang)
+
+    assert picture_url == "https://upload.wikimedia.org/wikipedia/commons/1/12/House.jpg"
+    assert thumb_url == "https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/House.jpg/220px-House.jpg"

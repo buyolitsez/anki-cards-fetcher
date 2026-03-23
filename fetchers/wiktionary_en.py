@@ -71,7 +71,7 @@ class EnglishWiktionaryFetcher(BaseWiktionaryFetcher):
                     )
         return senses
 
-    def _extract_picture(self, lang_root) -> Optional[str]:
+    def _extract_picture_data(self, lang_root) -> tuple[Optional[str], Optional[str]]:
         """Override: en.wiktionary lang_root may be an h2, so we need section_nodes."""
         from .wiktionary_common import _IMAGE_BLACKLIST, _MIN_IMAGE_SIZE
         from ..wikimedia_urls import normalize_wikimedia_image_url
@@ -98,8 +98,9 @@ class EnglishWiktionaryFetcher(BaseWiktionaryFetcher):
                 width = height = 0
             if width and height and (width < _MIN_IMAGE_SIZE or height < _MIN_IMAGE_SIZE):
                 continue
-            return normalize_wikimedia_image_url(self._normalize_url(src))
-        return None
+            thumb_url = self._normalize_url(src)
+            return normalize_wikimedia_image_url(thumb_url), thumb_url
+        return None, None
 
     # ----------------------- helpers -----------------------
 

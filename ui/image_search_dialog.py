@@ -60,6 +60,7 @@ class ImageSearchDialog(QDialog):
         self._thumb_max_in_flight: int = 4
         self._seen_image_keys: set[str] = set()
         self._next_offset: int = 0
+        self._closed: bool = False
 
         # widgets
         self.query_edit = QLineEdit()
@@ -187,7 +188,7 @@ class ImageSearchDialog(QDialog):
             return results, used_provider, safe
 
         def on_done(future, token=token):
-            if token != self._search_token:
+            if token != self._search_token or self._closed:
                 return
             self._search_in_progress = False
             try:
@@ -254,7 +255,7 @@ class ImageSearchDialog(QDialog):
             )
 
         def on_done(future, token=token):
-            if token != self._load_token:
+            if token != self._load_token or self._closed:
                 return
             self._load_in_progress = False
             try:
@@ -349,6 +350,8 @@ class ImageSearchDialog(QDialog):
                 item.setIcon(QIcon(pix))
 
     def _refresh_icons(self):
+        if self._closed:
+            return
         for i in range(self.results_list.count()):
             item = self.results_list.item(i)
             res = item.data(self._user_role())
@@ -398,7 +401,7 @@ class ImageSearchDialog(QDialog):
         self.cfg = get_config()
 
     def _on_search_timeout(self, token: int):
-        if token != self._search_token or not self._search_in_progress:
+        if self._closed or token != self._search_token or not self._search_in_progress:
             return
         # invalidate late results
         self._search_in_progress = False
@@ -407,7 +410,7 @@ class ImageSearchDialog(QDialog):
         showWarning("Image search timed out. Try again.")
 
     def _on_load_timeout(self, token: int):
-        if token != self._load_token or not self._load_in_progress:
+        if self._closed or token != self._load_token or not self._load_in_progress:
             return
         self._load_in_progress = False
         self._load_token += 1
@@ -425,7 +428,7 @@ class ImageSearchDialog(QDialog):
         self._pump_thumbnail_queue(self._thumb_token)
 
     def _pump_thumbnail_queue(self, token: int):
-        if token != self._thumb_token:
+        if self._closed or token != self._thumb_token:
             return
         while self._thumb_in_flight < self._thumb_max_in_flight and self._thumb_queue:
             batch = self._thumb_queue[:1]
@@ -438,7 +441,7 @@ class ImageSearchDialog(QDialog):
 
             def on_done(future, token=token):
                 self._thumb_in_flight = max(0, self._thumb_in_flight - 1)
-                if token != self._thumb_token:
+                if token != self._thumb_token or self._closed:
                     return
                 try:
                     future.result()
@@ -448,3 +451,11 @@ class ImageSearchDialog(QDialog):
                 self._pump_thumbnail_queue(token)
 
             self._run_in_background(task, on_done)
+
+    def done(self, result: int):  # type: ignore[override]
+        self._closed = True
+        self._search_token += 1
+        self._load_token += 1
+        self._thumb_token += 1
+        self._thumb_queue = []
+        super().done(result)

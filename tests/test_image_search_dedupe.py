@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from cambridge_fetch.image_search import (
     ImageResult,
+    attach_thumbnails,
     collect_unique_image_batch,
     dedupe_image_results,
     normalize_image_url_key,
@@ -118,3 +119,40 @@ def test_collect_unique_image_batch_stops_on_page_limit_for_duplicate_only_pages
     assert result.next_offset == 4
     assert result.exhausted is False
     assert result.reached_page_limit is True
+
+
+def test_attach_thumbnails_retries_wikimedia_thumb_on_429(monkeypatch):
+    calls = []
+
+    class _Resp:
+        def __init__(self, status_code, content_type, content):
+            self.status_code = status_code
+            self.headers = {"Content-Type": content_type}
+            self.content = content
+
+    class _Requests:
+        def get(self, url, **_kwargs):
+            calls.append(url)
+            if "/thumb/" in url:
+                return _Resp(429, "text/plain", b"")
+            return _Resp(200, "image/jpeg", b"jpeg")
+
+    import cambridge_fetch.image_search as image_search_mod
+
+    monkeypatch.setattr(image_search_mod, "require_requests", lambda: _Requests())
+    result = ImageResult(
+        image_url="https://upload.wikimedia.org/wikipedia/commons/c/c6/Cocarde_Russie_1994.png",
+        thumb_url=(
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/"
+            "Cocarde_Russie_1994.png/175px-Cocarde_Russie_1994.png"
+        ),
+    )
+
+    attach_thumbnails([result], max_bytes=1000)
+
+    assert calls == [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c6/"
+        "Cocarde_Russie_1994.png/175px-Cocarde_Russie_1994.png",
+        "https://upload.wikimedia.org/wikipedia/commons/c/c6/Cocarde_Russie_1994.png",
+    ]
+    assert result.thumb_bytes == b"jpeg"
