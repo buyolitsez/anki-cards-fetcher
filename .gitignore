@@ -34,6 +34,7 @@ Thumbs.db
 
 # Runtime logs / local state (Anki add-on folder)
 logs/
+user_files/logs/
 *.log
 
 # Anki generates this per-user in the add-ons folder.

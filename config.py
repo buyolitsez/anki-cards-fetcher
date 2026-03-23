@@ -394,12 +394,6 @@ def _normalized_config(raw_cfg: Dict) -> Dict:
     merged.pop("source", None)
     return merged
 
-
-def _write_json(path: Path, payload: Dict):
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-
-
 def get_config() -> Dict:
     stored: Dict = {}
     try:
@@ -435,23 +429,6 @@ def save_config(updates: Dict):
         mw.addonManager.writeConfig(ADDON_NAME, cfg)
     except Exception:
         logger.exception("Failed to write config via addonManager")
-    # mirror to meta.json
-    try:
-        meta = {}
-        if META_PATH.exists():
-            with META_PATH.open("r", encoding="utf-8") as f:
-                meta = json.load(f) or {}
-                if not isinstance(meta, dict):
-                    meta = {}
-        meta["config"] = cfg
-        _write_json(META_PATH, meta)
-    except Exception:
-        logger.exception("Failed to write meta.json")
-    # plain config.json as fallback
-    try:
-        _write_json(CONFIG_PATH, cfg)
-    except Exception:
-        logger.exception("Failed to write config.json")
     # Apply the new log level immediately.
     set_log_level(cfg.get("log_level", "WARNING"))
     logger.debug("Config saved successfully")

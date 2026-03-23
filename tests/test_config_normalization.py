@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import cambridge_fetch.config as config_mod
 
 
@@ -48,7 +46,7 @@ def test_get_config_normalizes_legacy_source_and_nested(monkeypatch):
     assert cfg["language_default_presets"] == {"en": "default", "ru": None}
 
 
-def test_save_config_normalizes_and_writes_files(monkeypatch, tmp_path):
+def test_save_config_normalizes_without_touching_package_files(monkeypatch, tmp_path):
     manager = _DummyAddonManager(stored={})
     monkeypatch.setattr(config_mod.mw, "addonManager", manager, raising=False)
     monkeypatch.setattr(config_mod, "META_PATH", tmp_path / "meta.json")
@@ -68,13 +66,8 @@ def test_save_config_normalizes_and_writes_files(monkeypatch, tmp_path):
     assert saved_cfg["presets"][0]["sources"] == ["wiktionary"]
     assert saved_cfg["language_default_presets"] == {"en": "default", "ru": None}
     assert "source" not in saved_cfg
-
-    meta = json.loads((tmp_path / "meta.json").read_text(encoding="utf-8"))
-    plain = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
-    assert meta["config"]["sources"] == ["wiktionary"]
-    assert meta["config"]["presets"][0]["sources"] == ["wiktionary"]
-    assert meta["config"]["language_default_presets"] == {"en": "default", "ru": None}
-    assert plain["sources"] == ["wiktionary"]
+    assert not (tmp_path / "meta.json").exists()
+    assert not (tmp_path / "config.json").exists()
 
 
 def test_normalize_helpers_bounds_and_defaults():

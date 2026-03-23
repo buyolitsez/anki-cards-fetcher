@@ -8,8 +8,8 @@ Default log level is **WARNING** — only warnings and errors are recorded.
 Switch to DEBUG or INFO via *Tools → Dictionary Fetch — Settings* to get
 detailed diagnostics when something goes wrong.
 
-Log files are stored next to the add-on code:
-    ``cambridge_fetch/logs/cambridge_fetch.log``
+Log files are stored in the add-on's preserved ``user_files`` folder:
+    ``cambridge_fetch/user_files/logs/cambridge_fetch.log``
     (rotated to .log.1, .log.2, … up to ``BACKUP_COUNT`` backups)
 """
 
@@ -24,7 +24,8 @@ from pathlib import Path
 # Constants
 # ---------------------------------------------------------------------------
 ADDON_DIR = Path(os.path.dirname(__file__))
-LOG_DIR = ADDON_DIR / "logs"
+USER_FILES_DIR = ADDON_DIR / "user_files"
+LOG_DIR = USER_FILES_DIR / "logs"
 LOG_FILE = LOG_DIR / "cambridge_fetch.log"
 LOG_FORMAT = "%(asctime)s [%(levelname)-7s] %(name)s: %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
