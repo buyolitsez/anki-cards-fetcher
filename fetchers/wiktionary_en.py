@@ -34,6 +34,23 @@ class EnglishWiktionaryFetcher(BaseWiktionaryFetcher):
     TARGET_LANGUAGE = "English"
     WIKI_REFERER = "https://en.wiktionary.org/"
 
+    def _find_language_section(self, soup):
+        lang_root = super()._find_language_section(soup)
+        if lang_root is not None:
+            return lang_root
+
+        for section in soup.find_all("section"):
+            aria = (section.get("aria-labelledby") or "").strip()
+            if aria:
+                return section
+
+        for heading in soup.find_all("h2"):
+            title = self._normalize_title(self._heading_text(heading))
+            if not title or title.casefold() in {"contents", "pronunciation", "etymology"}:
+                continue
+            return heading
+        return None
+
     # _parse_senses is the only required override
     def _parse_senses(self, lang_root) -> List[Sense]:
         senses: List[Sense] = []

@@ -105,6 +105,33 @@ def test_wiktionary_en_basic_parse():
     assert picture and "upload.wikimedia.org" in picture
 
 
+def test_wiktionary_en_falls_back_to_first_language_section():
+    html = """
+    <html><body>
+      <h2><span class="mw-headline" id="Armenian">Armenian</span></h2>
+      <h3><span class="mw-headline" id="Pronunciation">Pronunciation</span></h3>
+      <ul>
+        <li>(Eastern Armenian) <span class="IPA">/kɑtʰ/</span></li>
+      </ul>
+      <h3><span class="mw-headline" id="Noun">Noun</span></h3>
+      <ol>
+        <li><a href="/wiki/milk">milk</a></li>
+      </ol>
+    </body></html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    fetcher = EnglishWiktionaryFetcher({})
+
+    lang = fetcher._find_language_section(soup)
+    senses = fetcher._parse_senses(lang)
+
+    assert lang is not None
+    assert fetcher._heading_text(lang) == "Armenian"
+    assert senses
+    assert senses[0].definition == "milk"
+    assert senses[0].ipa.get("default") == "/kɑtʰ/"
+
+
 def test_wiktionary_en_extract_picture_data_preserves_thumbnail_url():
     html = """
     <html><body>
