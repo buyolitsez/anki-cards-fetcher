@@ -11,7 +11,7 @@ from ..core.types import CandidateMatch, ResolvedPreset, SearchRequest
 from ..fetchers import get_fetcher_by_id
 from ..language_detection import detect_word_language
 from ..server.repository import Repository
-from ..typo import collect_typo_suggestions
+from ..typo import collect_validated_typo_suggestions
 
 PAGE_SIZE = 5
 
@@ -144,11 +144,22 @@ def _collect_bot_suggestions(*, word: str, resolved: ResolvedPreset) -> list[str
     if not bool(typo_cfg.get("enabled", True)):
         return []
     cfg_snapshot = dict(resolved.payload or {})
-    result = collect_typo_suggestions(
+
+    def validate_word(candidate: str) -> bool:
+        for source_id in resolved.sources:
+            try:
+                if get_fetcher_by_id(source_id, cfg_snapshot).fetch(candidate):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    result = collect_validated_typo_suggestions(
         word=word,
         source_ids=resolved.sources,
         max_results=_typo_max_results(cfg_snapshot),
         suggest_for_query=lambda source_id, query, fetch_limit: get_fetcher_by_id(source_id, cfg_snapshot).suggest(query, limit=fetch_limit),
+        validate_word=validate_word,
     )
     return result.suggestions
 

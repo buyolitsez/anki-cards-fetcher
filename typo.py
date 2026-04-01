@@ -184,3 +184,109 @@ def collect_typo_suggestions(
 
     ranked = rank_suggestions(base, candidates, ranked_limit)
     return TypoCollectResult(suggestions=ranked, cancelled=cancelled)
+
+
+def validate_typo_candidates(
+    *,
+    candidates: Sequence[str],
+    validate_word: Callable[[str], bool],
+    target_count: int,
+    cancel_event: Optional[Event] = None,
+    max_workers: int = 8,
+    poll_interval: float = 0.05,
+) -> TypoCollectResult:
+    target = max(1, int(target_count or 1))
+    uniq_candidates: List[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        item = (candidate or "").strip()
+        if not item:
+            continue
+        key = item.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq_candidates.append(item)
+    if not uniq_candidates:
+        return TypoCollectResult(suggestions=[], cancelled=False)
+    if cancel_event and cancel_event.is_set():
+        return TypoCollectResult(suggestions=[], cancelled=True)
+
+    worker_count = min(max(1, max_workers), len(uniq_candidates))
+    pool = ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="typo-validate")
+    pending = set()
+    future_to_candidate = {}
+    valid_keys: set[str] = set()
+    cancelled = False
+
+    try:
+        for candidate in uniq_candidates:
+            if cancel_event and cancel_event.is_set():
+                cancelled = True
+                break
+            future = pool.submit(validate_word, candidate)
+            pending.add(future)
+            future_to_candidate[future] = candidate
+
+        while pending:
+            if cancel_event and cancel_event.is_set():
+                cancelled = True
+                break
+            done, pending = wait(pending, timeout=max(0.0, poll_interval), return_when=FIRST_COMPLETED)
+            if not done:
+                continue
+            for future in done:
+                candidate = future_to_candidate.get(future, "")
+                is_valid = False
+                try:
+                    is_valid = bool(future.result())
+                except Exception:
+                    is_valid = False
+                if is_valid:
+                    valid_keys.add(candidate.casefold())
+                    if len(valid_keys) >= target:
+                        pending.clear()
+                        break
+    finally:
+        for future in pending:
+            if not future.done():
+                future.cancel()
+        try:
+            pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            pool.shutdown(wait=False)
+    ordered_valid = [candidate for candidate in uniq_candidates if candidate.casefold() in valid_keys]
+    return TypoCollectResult(suggestions=ordered_valid[:target], cancelled=cancelled)
+
+
+def collect_validated_typo_suggestions(
+    *,
+    word: str,
+    source_ids: Sequence[str],
+    max_results: int,
+    suggest_for_query: Callable[[str, str, int], List[str]],
+    validate_word: Callable[[str], bool],
+    cancel_event: Optional[Event] = None,
+    suggest_max_workers: int = 8,
+    validate_max_workers: int = 8,
+    poll_interval: float = 0.05,
+) -> TypoCollectResult:
+    collected = collect_typo_suggestions(
+        word=word,
+        source_ids=source_ids,
+        max_results=max_results,
+        suggest_for_query=suggest_for_query,
+        cancel_event=cancel_event,
+        max_workers=suggest_max_workers,
+        poll_interval=poll_interval,
+    )
+    if collected.cancelled or not collected.suggestions:
+        return collected
+    return validate_typo_candidates(
+        candidates=collected.suggestions,
+        validate_word=validate_word,
+        target_count=max_results,
+        cancel_event=cancel_event,
+        max_workers=validate_max_workers,
+        poll_interval=poll_interval,
+    )
