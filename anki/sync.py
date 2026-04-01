@@ -16,7 +16,7 @@ from ..core.types import NoteDraft
 from ..http_client import require_requests
 from ..logger import get_logger
 from ..ui.background import run_in_background
-from .importer import DraftImportError, add_note_from_draft
+from .importer import add_note_from_draft
 
 logger = get_logger(__name__)
 
@@ -180,9 +180,26 @@ def push_manifest_and_index_now() -> Dict:
     device_token = str(sync_cfg.get("device_token") or "").strip()
     if not server_url or not device_token:
         raise RuntimeError("Telegram sync is not paired yet.")
+    manifest_payload = _manifest_payload()
+    duplicate_payload = _build_duplicate_index_payload()
+    return _push_manifest_and_index_remote(
+        server_url=server_url,
+        device_token=device_token,
+        manifest_payload=manifest_payload,
+        duplicate_payload=duplicate_payload,
+    )
+
+
+def _push_manifest_and_index_remote(
+    *,
+    server_url: str,
+    device_token: str,
+    manifest_payload: Dict,
+    duplicate_payload: Dict,
+) -> Dict:
     client = SyncClient(server_url=server_url, device_token=device_token)
-    manifest_result = client.push_manifest(_manifest_payload())
-    duplicate_result = client.push_duplicate_index(_build_duplicate_index_payload())
+    manifest_result = client.push_manifest(manifest_payload)
+    duplicate_result = client.push_duplicate_index(duplicate_payload)
     _persist_sync_cfg({"last_sync_error": ""})
     return {"manifest": manifest_result, "duplicate_index": duplicate_result}
 
@@ -194,24 +211,64 @@ def pair_device_and_sync() -> Dict:
     device_label = str(sync_cfg.get("device_label") or "").strip() or f"desktop-{uuid.uuid4().hex[:8]}"
     if not server_url or not bootstrap_token:
         raise RuntimeError("Set server URL and bootstrap token first.")
+    manifest_payload = _manifest_payload()
+    duplicate_payload = _build_duplicate_index_payload()
+    return _pair_and_sync_remote(
+        server_url=server_url,
+        bootstrap_token=bootstrap_token,
+        device_label=device_label,
+        manifest_payload=manifest_payload,
+        duplicate_payload=duplicate_payload,
+    )
+
+
+def _pair_and_sync_remote(
+    *,
+    server_url: str,
+    bootstrap_token: str,
+    device_label: str,
+    manifest_payload: Dict,
+    duplicate_payload: Dict,
+) -> Dict:
     client = SyncClient(server_url=server_url)
     paired = client.pair(bootstrap_token=bootstrap_token, device_label=device_label)
     device_token = str(paired.get("device_token") or "").strip()
     if not device_token:
         raise RuntimeError("Pairing succeeded but no device token was returned.")
-    _persist_sync_cfg({"device_token": device_token, "device_label": device_label})
-    return push_manifest_and_index_now()
+    manifest_result = client.push_manifest(manifest_payload)
+    duplicate_result = client.push_duplicate_index(duplicate_payload)
+    return {
+        "paired": paired,
+        "manifest": manifest_result,
+        "duplicate_index": duplicate_result,
+    }
 
 
-def import_pending_queue(limit: int = 25) -> Dict:
+def fetch_pending_queue(limit: int = 25) -> Dict:
     sync_cfg = _telegram_sync_cfg()
     server_url = str(sync_cfg.get("server_url") or "").strip()
     device_token = str(sync_cfg.get("device_token") or "").strip()
     if not server_url or not device_token:
-        return {"imported": 0, "failed": 0, "items": []}
+        return {"server_url": server_url, "device_token": device_token, "items": []}
 
     client = SyncClient(server_url=server_url, device_token=device_token)
     items = client.pending_queue(limit=limit)
+    return {"server_url": server_url, "device_token": device_token, "items": items}
+
+
+def import_pending_queue(limit: int = 25) -> Dict:
+    payload = fetch_pending_queue(limit=limit)
+    items = payload.get("items") or []
+    if not items:
+        return {"imported": 0, "failed": 0, "items": []}
+    client = SyncClient(
+        server_url=str(payload.get("server_url") or ""),
+        device_token=str(payload.get("device_token") or ""),
+    )
+    return _import_pending_items(items=items, client=client)
+
+
+def _import_pending_items(*, items: List[Dict], client: SyncClient) -> Dict:
     imported = 0
     failed = 0
     results: List[Dict] = []
@@ -252,27 +309,98 @@ def _run_ui_action(task, success_message: str, parent=None) -> None:
 
 
 def run_pair_and_sync(parent=None) -> None:
-    _run_ui_action(
-        task=pair_device_and_sync,
-        success_message="Desktop paired and metadata synced.",
-        parent=parent,
-    )
+    sync_cfg = _telegram_sync_cfg()
+    server_url = str(sync_cfg.get("server_url") or "").strip()
+    bootstrap_token = str(sync_cfg.get("bootstrap_token") or "").strip()
+    device_label = str(sync_cfg.get("device_label") or "").strip() or f"desktop-{uuid.uuid4().hex[:8]}"
+    if not server_url or not bootstrap_token:
+        showWarning("Set server URL and bootstrap token first.")
+        return
+    manifest_payload = _manifest_payload()
+    duplicate_payload = _build_duplicate_index_payload()
+
+    def task():
+        return _pair_and_sync_remote(
+            server_url=server_url,
+            bootstrap_token=bootstrap_token,
+            device_label=device_label,
+            manifest_payload=manifest_payload,
+            duplicate_payload=duplicate_payload,
+        )
+
+    def on_done(future):
+        try:
+            result = future.result()
+        except Exception as exc:
+            logger.exception("Telegram sync action failed")
+            _persist_sync_cfg({"last_sync_error": str(exc)})
+            showWarning(f"Telegram sync failed: {exc}")
+            return
+        paired = result.get("paired") if isinstance(result, dict) else {}
+        device_token = str((paired or {}).get("device_token") or "").strip()
+        if device_token:
+            _persist_sync_cfg(
+                {
+                    "device_token": device_token,
+                    "device_label": str((paired or {}).get("device_label") or device_label),
+                    "last_sync_error": "",
+                }
+            )
+        tooltip("Desktop paired and metadata synced.", parent=parent)
+
+    run_in_background(task, on_done)
 
 
 def run_push_manifest(parent=None) -> None:
+    sync_cfg = _telegram_sync_cfg()
+    server_url = str(sync_cfg.get("server_url") or "").strip()
+    device_token = str(sync_cfg.get("device_token") or "").strip()
+    if not server_url or not device_token:
+        showWarning("Telegram sync is not paired yet.")
+        return
+    manifest_payload = _manifest_payload()
+    duplicate_payload = _build_duplicate_index_payload()
+
     _run_ui_action(
-        task=push_manifest_and_index_now,
+        task=lambda: _push_manifest_and_index_remote(
+            server_url=server_url,
+            device_token=device_token,
+            manifest_payload=manifest_payload,
+            duplicate_payload=duplicate_payload,
+        ),
         success_message="Manifest and duplicate index synced.",
         parent=parent,
     )
 
 
 def run_manual_import(parent=None) -> None:
-    _run_ui_action(
-        task=lambda: import_pending_queue(limit=25),
-        success_message="Imported {result[imported]} Telegram draft(s).",
-        parent=parent,
-    )
+    def on_done(future):
+        try:
+            payload = future.result()
+        except Exception as exc:
+            logger.exception("Telegram sync action failed")
+            _persist_sync_cfg({"last_sync_error": str(exc)})
+            showWarning(f"Telegram sync failed: {exc}")
+            return
+        try:
+            server_url = str(payload.get("server_url") or "")
+            device_token = str(payload.get("device_token") or "")
+            items = list(payload.get("items") or [])
+            if not items:
+                tooltip("Imported 0 Telegram draft(s).", parent=parent)
+                return
+            result = _import_pending_items(
+                items=items,
+                client=SyncClient(server_url=server_url, device_token=device_token),
+            )
+        except Exception as exc:
+            logger.exception("Telegram import failed on main thread")
+            _persist_sync_cfg({"last_sync_error": str(exc)})
+            showWarning(f"Telegram sync failed: {exc}")
+            return
+        tooltip(f"Imported {result['imported']} Telegram draft(s).", parent=parent)
+
+    run_in_background(lambda: fetch_pending_queue(limit=25), on_done)
 
 
 def initialize_sync_hooks(parent=None) -> None:
