@@ -16,6 +16,10 @@ from ..typo import collect_validated_typo_suggestions
 PAGE_SIZE = 5
 
 
+def _normalize_query_word(word: str) -> str:
+    return (word or "").strip().lower()
+
+
 def _repo(context: ContextTypes.DEFAULT_TYPE) -> Repository:
     return context.application.bot_data["repository"]
 
@@ -181,6 +185,7 @@ async def _perform_search(
     word: str,
     explicit_preset_id: Optional[str] = None,
 ) -> None:
+    word = _normalize_query_word(word)
     user = update.effective_user
     if not user:
         return
@@ -242,6 +247,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.effective_message.reply_text("This bot is private.")
         return
     text = (update.effective_message.text or "").strip()
+    text = _normalize_query_word(text)
     if not text:
         return
     if detect_word_language(text) is None:

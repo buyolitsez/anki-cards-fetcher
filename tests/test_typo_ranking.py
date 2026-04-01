@@ -40,6 +40,13 @@ def test_fallback_queries_for_short_words():
     assert fallback_queries("  ") == []
 
 
+def test_fallback_queries_include_single_vowel_substitutions_for_cyrillic():
+    queries = fallback_queries("препарка", max_queries=40)
+    assert "припарка" in queries
+    queries = fallback_queries("полиглат", max_queries=40)
+    assert "полиглот" in queries
+
+
 def test_rank_suggestions_empty_word_and_blank_candidates():
     assert rank_suggestions("   ", ["a", "b"], limit=5) == []
     assert rank_suggestions("test", ["", "   ", "test", "Test"], limit=5) == []

@@ -38,6 +38,22 @@ def fallback_queries(word: str, max_queries: int = 24) -> List[str]:
     if len(q) >= 5:
         out.append(q[:-2])
     out.append(q[1:])  # common typo: accidental first char
+    # Replace likely vowel typos within the same script.
+    latin_vowels = "aeiouy"
+    cyrillic_vowels = "аеёиоуыэюя"
+    for i, ch in enumerate(q):
+        lower = ch.lower()
+        if lower in latin_vowels:
+            replacements = latin_vowels
+        elif lower in cyrillic_vowels:
+            replacements = cyrillic_vowels
+        else:
+            continue
+        for repl in replacements:
+            if repl == lower:
+                continue
+            candidate = q[:i] + (repl.upper() if ch.isupper() else repl) + q[i + 1 :]
+            out.append(candidate)
     # Remove one character in each position (covers accidental extra char).
     for i in range(len(q)):
         out.append(q[:i] + q[i + 1 :])
@@ -115,7 +131,7 @@ def collect_typo_suggestions(
         return TypoCollectResult(suggestions=[], cancelled=True)
 
     max_results = max(1, min(int(max_results or 1), 40))
-    query_count = max(8, min(max_results + 6, 18))
+    query_count = max(16, min(max_results * 4, 40))
     fetch_limit = max(8, min(max_results * 2, 20))
     target_candidates = max(max_results * 3, 16)
     ranked_limit = max(max_results * 4, max_results + 12)

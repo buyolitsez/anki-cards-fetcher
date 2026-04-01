@@ -6,7 +6,7 @@ telegram = pytest.importorskip("telegram")
 
 from cambridge_fetch.core.types import CandidateMatch, ResolvedPreset
 from cambridge_fetch.models import Sense
-from cambridge_fetch.telegram_bot.handlers import _render_candidates, _render_suggestions
+from cambridge_fetch.telegram_bot.handlers import _normalize_query_word, _render_candidates, _render_suggestions
 
 
 def test_render_candidates_includes_target_metadata():
@@ -72,3 +72,8 @@ def test_render_suggestions_paginates_and_uses_dropdown_callbacks():
     assert markup.inline_keyboard[0][0].callback_data == "sug:0:0"
     assert markup.inline_keyboard[4][0].callback_data == "sug:4:0"
     assert markup.inline_keyboard[5][0].callback_data == "sugpage:1"
+
+
+def test_normalize_query_word_lowercases_input():
+    assert _normalize_query_word("  FeNcE ") == "fence"
+    assert _normalize_query_word(" ПРИПАРКА ") == "припарка"

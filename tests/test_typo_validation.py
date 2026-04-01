@@ -25,3 +25,16 @@ def test_collect_validated_typo_suggestions_runs_collection_and_validation():
 
     assert result.cancelled is False
     assert result.suggestions == ["fence"]
+
+
+def test_collect_validated_typo_suggestions_keeps_ranked_order():
+    result = collect_validated_typo_suggestions(
+        word="препарка",
+        source_ids=["wiktionary"],
+        max_results=5,
+        suggest_for_query=lambda source_id, query, fetch_limit: [],
+        validate_word=lambda candidate: candidate in {"припарка", "пропарка"},
+    )
+
+    assert result.cancelled is False
+    assert result.suggestions[:2] == ["припарка", "пропарка"]
