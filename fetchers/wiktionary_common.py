@@ -118,13 +118,42 @@ class BaseWiktionaryFetcher(BaseFetcher):
         url = self.WIKI_BASE.format(word=quote(word.strip()))
         logger.debug("%s: requesting %s", self.LABEL, url)
         try:
-            resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=_WIKTIONARY_TIMEOUT)
+            resp = requests.get(
+                url,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "text/html,application/xhtml+xml",
+                    "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+                },
+                timeout=_WIKTIONARY_TIMEOUT,
+            )
         except Exception as e:
             logger.error("%s: request failed for '%s': %s", self.LABEL, word, e)
             raise FetchError(f"Wiktionary request failed: {e}") from e
         if resp.status_code == 404:
             logger.debug("%s: 404 for '%s'", self.LABEL, word)
             return []
+        if resp.status_code == 403:
+            logger.warning("%s: wiki page returned 403 for '%s', trying API parse fallback", self.LABEL, word)
+            api_html = self._fetch_via_parse_api(word)
+            if api_html:
+                soup = BeautifulSoup(api_html, "html.parser")
+                lang_root = self._find_language_section(soup)
+                if not lang_root:
+                    logger.debug("%s: API fallback returned HTML but no '%s' section for '%s'", self.LABEL, self.TARGET_LANGUAGE, word)
+                    return []
+                senses = self._parse_senses(lang_root)
+                picture, picture_thumb = self._extract_picture_data(lang_root)
+                if picture:
+                    for s in senses:
+                        if not s.picture_url:
+                            s.picture_url = picture
+                        if not s.picture_thumb_url:
+                            s.picture_thumb_url = picture_thumb
+                        if not s.picture_referer:
+                            s.picture_referer = self.WIKI_REFERER
+                logger.info("%s: API fallback found %d senses for '%s'", self.LABEL, len(senses), word)
+                return senses
         if resp.status_code >= 400:
             logger.error("%s: HTTP %d for '%s'", self.LABEL, resp.status_code, word)
             raise FetchError(f"Wiktionary returned {resp.status_code} for '{word}'.")
@@ -165,6 +194,48 @@ class BaseWiktionaryFetcher(BaseFetcher):
 
     def _parse_senses(self, lang_root) -> List[Sense]:  # pragma: no cover
         raise NotImplementedError
+
+    def _fetch_via_parse_api(self, word: str) -> Optional[str]:
+        requests = require_requests()
+        page_title = (word or "").strip()
+        if not page_title:
+            return None
+        try:
+            resp = requests.get(
+                self.API_BASE,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "application/json",
+                    "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+                },
+                params={
+                    "action": "parse",
+                    "page": page_title,
+                    "prop": "text",
+                    "format": "json",
+                    "formatversion": 2,
+                },
+                timeout=_WIKTIONARY_TIMEOUT,
+            )
+        except Exception as exc:
+            logger.warning("%s: API parse request failed for '%s': %s", self.LABEL, word, exc)
+            return None
+        if resp.status_code >= 400:
+            logger.warning("%s: API parse returned HTTP %d for '%s'", self.LABEL, resp.status_code, word)
+            return None
+        try:
+            payload = resp.json()
+        except Exception as exc:
+            logger.warning("%s: API parse returned invalid JSON for '%s': %s", self.LABEL, word, exc)
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("error"):
+            logger.debug("%s: API parse error for '%s': %s", self.LABEL, word, payload.get("error"))
+            return None
+        parsed = payload.get("parse") if isinstance(payload.get("parse"), dict) else {}
+        html = parsed.get("text")
+        return html if isinstance(html, str) and html.strip() else None
 
     # --- shared section detection -------------------------------------------
 

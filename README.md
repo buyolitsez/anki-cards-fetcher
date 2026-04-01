@@ -52,3 +52,6 @@ Available options:
 ## Building The Public Add-on
 - Do not zip the whole repo anymore.
 - Use `./build_ankiaddon.sh` to create a clean `.ankiaddon` that excludes bot/server code, tests, `.env`, caches, and local-only files.
+
+## Server Helpers
+- `./restart_telegram_bot.sh` restarts the Telegram bot service on the server.
