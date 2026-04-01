@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cambridge-fetch"
+version = "1.1.0"
+description = "Anki dictionary fetcher with Telegram queue bridge"
+requires-python = ">=3.11"
+dependencies = [
+  "requests>=2.31",
+  "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+server = [
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+]
+telegram = [
+  "python-telegram-bot>=22,<23",
+]
+dev = [
+  "pytest>=8.0",
+]
+
+[tool.setuptools]
+packages = [
+  "cambridge_fetch",
+  "cambridge_fetch.anki",
+  "cambridge_fetch.core",
+  "cambridge_fetch.fetchers",
+  "cambridge_fetch.server",
+  "cambridge_fetch.telegram_bot",
+  "cambridge_fetch.ui",
+]
+
+[tool.setuptools.package-dir]
+cambridge_fetch = "."

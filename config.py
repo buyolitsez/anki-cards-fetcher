@@ -8,16 +8,21 @@ from typing import Dict, Optional
 
 from aqt import mw
 
+from .defaults import (
+    DEFAULT_CONFIG,
+    DEFAULT_IMAGE_PROVIDER,
+    DEFAULT_PRESET_CONFIG,
+    DEFAULT_PRESET_ID,
+    DEFAULT_PRESET_NAME,
+    DEFAULT_SOURCE_ID,
+    DEFAULT_TELEGRAM_SYNC_CONFIG,
+    SUPPORTED_SOURCE_IDS,
+    deep_copy_defaults,
+)
 from .language_detection import default_language_default_presets, supported_language_codes
 from .logger import get_logger, set_log_level
 
 logger = get_logger(__name__)
-
-DEFAULT_IMAGE_PROVIDER = "duckduckgo"
-SUPPORTED_SOURCE_IDS = ("cambridge", "wiktionary", "wiktionary_en")
-DEFAULT_SOURCE_ID = "cambridge"
-DEFAULT_PRESET_ID = "default"
-DEFAULT_PRESET_NAME = "Default"
 
 PRESET_PAYLOAD_KEYS = (
     "note_type",
@@ -34,56 +39,6 @@ PRESET_PAYLOAD_KEYS = (
     "log_level",
 )
 PRESET_SCOPED_UPDATE_KEYS = PRESET_PAYLOAD_KEYS + ("source",)
-
-DEFAULT_PRESET_CONFIG: Dict = {
-    "note_type": None,
-    "deck": None,
-    "remember_last": True,
-    "field_map": {
-        "word": ["Word", "Front"],
-        "definition": ["Definition"],
-        "examples": ["Examples", "Example"],
-        "synonyms": ["Synonyms"],
-        "pos": ["POS"],
-        "ipa": ["IPA"],
-        "audio": ["Audio"],
-        "picture": ["Picture"],
-    },
-    "wiktionary": {
-        "field_map": {
-            "syllables": ["Syllables"],
-        }
-    },
-    "dialect_priority": ["us", "uk"],
-    "max_examples": 2,
-    "max_synonyms": 4,
-    "sources": [DEFAULT_SOURCE_ID],
-    "image_search": {
-        "provider": DEFAULT_IMAGE_PROVIDER,
-        "max_results": 12,
-        "safe_search": True,
-    },
-    "typo_suggestions": {
-        "enabled": True,
-        "max_results": 12,
-    },
-    "log_level": "WARNING",
-}
-
-
-DEFAULT_CONFIG: Dict = {
-    **json.loads(json.dumps(DEFAULT_PRESET_CONFIG)),
-    "presets": [
-        {
-            "id": DEFAULT_PRESET_ID,
-            "name": DEFAULT_PRESET_NAME,
-            **json.loads(json.dumps(DEFAULT_PRESET_CONFIG)),
-        }
-    ],
-    "active_preset_id": DEFAULT_PRESET_ID,
-    "language_default_presets": default_language_default_presets(),
-}
-
 # Add-on id helper (Anki may require the folder name in some versions)
 try:
     ADDON_NAME = mw.addonManager.addonFromModule(__name__.split(".")[0])
@@ -123,7 +78,9 @@ def _read_config_json() -> Dict:
 
 
 def _deep_copy_defaults() -> Dict:
-    return json.loads(json.dumps(DEFAULT_CONFIG))
+    defaults = deep_copy_defaults()
+    defaults["language_default_presets"] = default_language_default_presets()
+    return defaults
 
 
 def _clean_optional_string(raw) -> Optional[str]:
@@ -389,6 +346,7 @@ def _normalized_config(raw_cfg: Dict) -> Dict:
         raw.get("language_default_presets"),
         merged["presets"],
     )
+    merged["telegram_sync"] = normalize_telegram_sync(raw.get("telegram_sync"))
     _mirror_active_preset_selection(merged)
 
     merged.pop("source", None)
@@ -522,3 +480,28 @@ def normalize_log_level(raw) -> str:
         if level in VALID_LEVELS:
             return level
     return DEFAULT_PRESET_CONFIG.get("log_level", "WARNING")
+
+
+def normalize_telegram_sync(raw) -> Dict:
+    default = DEFAULT_TELEGRAM_SYNC_CONFIG
+    value = raw if isinstance(raw, dict) else {}
+    server_url = value.get("server_url")
+    bootstrap_token = value.get("bootstrap_token")
+    device_token = value.get("device_token")
+    device_label = value.get("device_label")
+    last_sync_error = value.get("last_sync_error")
+    return {
+        "server_url": server_url.strip().rstrip("/") if isinstance(server_url, str) else default["server_url"],
+        "bootstrap_token": bootstrap_token.strip() if isinstance(bootstrap_token, str) else default["bootstrap_token"],
+        "device_token": device_token.strip() if isinstance(device_token, str) else default["device_token"],
+        "device_label": device_label.strip() if isinstance(device_label, str) and device_label.strip() else default["device_label"],
+        "auto_pull_on_startup": bool(value.get("auto_pull_on_startup", default["auto_pull_on_startup"])),
+        "pull_interval_minutes": _normalize_int(
+            value.get("pull_interval_minutes"),
+            default=int(default["pull_interval_minutes"]),
+            minimum=0,
+            maximum=240,
+        ),
+        "auto_push_manifest": bool(value.get("auto_push_manifest", default["auto_push_manifest"])),
+        "last_sync_error": last_sync_error.strip() if isinstance(last_sync_error, str) else default["last_sync_error"],
+    }

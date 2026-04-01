@@ -16,6 +16,7 @@ An Anki add-on that fills notes with data from Cambridge Dictionary, ru.wiktiona
 - Validates typo suggestions against real dictionary entries.
 - Writes data into your fields through configurable field mapping.
 - Auto-selects a preset by detected word language (English/Russian) when configured in Settings.
+- Can pair with a private Telegram bot/server so desktop Anki imports queued note drafts.
 
 ## Image Search
 - The current version uses only `DuckDuckGo`.
@@ -41,3 +42,13 @@ Available options:
 - typo suggestions on/off and max number of confirmed suggestions;
 - field mapping (`word`, `definition`, `examples`, `synonyms`, `pos`, `ipa`, `audio`, `picture`);
 - RU Wiktionary mapping (`wiktionary.field_map.syllables`).
+- Telegram sync settings for pairing a desktop client, pushing presets/decks, and importing queued drafts.
+
+## Telegram Bridge
+- Desktop Anki remains the only writer to the real Anki collection.
+- The Telegram bot/server uses the same shared fetch/build logic and stores pending `NoteDraft`s until desktop Anki imports them.
+- Deployment guide: [`docs/telegram_sync_setup.md`](docs/telegram_sync_setup.md)
+
+## Building The Public Add-on
+- Do not zip the whole repo anymore.
+- Use `./build_ankiaddon.sh` to create a clean `.ankiaddon` that excludes bot/server code, tests, `.env`, caches, and local-only files.

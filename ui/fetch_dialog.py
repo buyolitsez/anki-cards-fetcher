@@ -23,11 +23,13 @@ from aqt.qt import (
 )
 from aqt.utils import showInfo, showWarning, tooltip
 
+from ..anki.importer import add_note_from_draft
 from ..config import get_active_preset, get_config, save_config
+from ..core.services import build_note_draft, format_note_preview
+from ..core.types import ResolvedPreset
 from ..fetchers import get_fetcher_by_id, get_fetchers
 from ..language_detection import decide_language_default_preset
 from ..logger import get_logger
-from ..media import download_to_media, save_bytes_to_media
 from ..models import Sense
 from ..typo import TypoCollectResult, collect_typo_suggestions
 from ..image_search import ImageResult
@@ -704,6 +706,40 @@ class FetchDialog(QDialog):
                 return merged
         return base_map
 
+    def _current_resolved_preset(self) -> ResolvedPreset:
+        active_preset_id = self._active_preset_id() or "default"
+        active_preset = get_active_preset(self.cfg) or {}
+        preset_name = str(active_preset.get("name") or active_preset_id)
+        sources = self._selected_source_ids()
+        payload = dict(active_preset)
+        payload.update(
+            {
+                "note_type": self._selected_note_type(),
+                "deck": self._selected_deck(),
+                "sources": sources,
+                "field_map": self.cfg.get("field_map", {}),
+                "wiktionary": self.cfg.get("wiktionary", {}),
+                "dialect_priority": self.cfg.get("dialect_priority", ["us", "uk"]),
+                "max_examples": self.cfg.get("max_examples", 2),
+                "max_synonyms": self.cfg.get("max_synonyms", 4),
+            }
+        )
+        wiki_map = (payload.get("wiktionary") or {}).get("field_map", {}) if isinstance(payload.get("wiktionary"), dict) else {}
+        return ResolvedPreset(
+            preset_id=active_preset_id,
+            preset_name=preset_name,
+            detected_language=self._last_detected_language,
+            note_type=payload.get("note_type"),
+            deck=payload.get("deck"),
+            sources=sources,
+            field_map=dict(payload.get("field_map") or {}),
+            wiktionary_field_map=dict(wiki_map or {}),
+            dialect_priority=[str(item).lower() for item in (payload.get("dialect_priority") or ["us", "uk"])],
+            max_examples=max(1, int(payload.get("max_examples") or 2)),
+            max_synonyms=max(1, int(payload.get("max_synonyms") or 4)),
+            payload=payload,
+        )
+
     # ---------- User actions ----------
     def on_fetch(self):
         if self._is_fetch_running():
@@ -896,22 +932,15 @@ class FetchDialog(QDialog):
             return
         sense = self.senses[row]
         source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
-        ipa = self._choose_ipa(sense.ipa)
-        picture_line = f"Picture: {'yes' if sense.picture_url else 'no'}"
-        if sense.picture_url:
-            picture_line += f"\nPicture URL: {sense.picture_url}"
-        text = [
-            f"Source: {self._source_label(source_id)}",
-            f"Definition: {sense.definition}",
-            f"Syllables: {sense.syllables or '-'}",
-            f"Examples: {' | '.join(sense.examples[:self.cfg['max_examples']]) or '-'}",
-            f"Synonyms: {', '.join(sense.synonyms[:self.cfg['max_synonyms']]) or '-'}",
-            f"POS: {sense.pos or '-'}",
-            f"IPA: {ipa or '-'}",
-            f"Audio: {', '.join(sense.audio_urls.keys()) or '-'}",
-            picture_line,
-        ]
-        self.preview.setPlainText("\n".join(text))
+        self.preview.setPlainText(
+            format_note_preview(
+                sense=sense,
+                source_id=self._source_label(source_id),
+                max_examples=self.cfg["max_examples"],
+                max_synonyms=self.cfg["max_synonyms"],
+                preset=self._current_resolved_preset(),
+            )
+        )
         self._update_image_buttons(row)
 
     def _update_image_buttons(self, row: int):
@@ -1022,24 +1051,14 @@ class FetchDialog(QDialog):
         if not deck_name:
             showWarning("Select a deck first.")
             return
-        deck_id = col.decks.id(deck_name)
-        col.decks.select(deck_id)
-        col.models.setCurrent(model)
-
-        note = self._create_note(col, model)
         source_id = self.sense_sources[row] if row < len(self.sense_sources) else self._selected_source_ids()[0]
-        fmap: Dict[str, List[str]] = self._resolve_field_map(source_id)
-
-        self._populate_fields(note, sense, fmap)
-        self._download_and_set_media(note, sense, fmap)
-
-        # ensure deck id set on note for older API
+        resolved_preset = self._current_resolved_preset()
+        draft = build_note_draft(self.word_edit.text().strip(), source_id, sense, resolved_preset)
         try:
-            note.model()["did"] = deck_id
-        except Exception:
-            pass
-
-        self._add_note_to_col(col, note, deck_id)
+            note_id = add_note_from_draft(col, draft)
+        except Exception as exc:
+            showWarning(str(exc))
+            return
 
         if self.cfg.get("remember_last", True):
             source_ids = self._selected_source_ids()
@@ -1052,119 +1071,8 @@ class FetchDialog(QDialog):
         logger.info("Note added (model=%s, deck=%s)", model_name, deck_name)
         tooltip("Note added.", parent=self)
         if open_editor:
-            self._open_browser(note.id)
+            self._open_browser(note_id)
         self.accept()
-
-    def _create_note(self, col, model):
-        """Create a new Anki note, handling legacy API variants."""
-        if hasattr(col, "new_note"):
-            return col.new_note(model)
-        try:
-            return col.newNote(False)
-        except TypeError:
-            return col.newNote()
-
-    def _populate_fields(self, note, sense: Sense, fmap: Dict[str, List[str]]):
-        """Map sense data into note fields according to *fmap*."""
-
-        def set_field(key: str, value: str):
-            names = fmap.get(key) or []
-            if isinstance(names, str):
-                names = [n.strip() for n in names.split(",") if n.strip()]
-            for name in names:
-                if name in note:
-                    if not value:
-                        continue
-                    if note[name]:
-                        note[name] = f"{note[name]}<br>{value}"
-                    else:
-                        note[name] = value
-
-        set_field("word", self.word_edit.text().strip())
-        set_field("syllables", sense.syllables or "")
-        set_field("definition", sense.definition)
-        set_field("pos", sense.pos or "")
-        set_field("ipa", self._choose_ipa(sense.ipa) or "")
-        ex = sense.examples[: self.cfg["max_examples"]]
-        numbered = [f"{i+1}. {txt}" for i, txt in enumerate(ex)]
-        set_field("examples", "<br>".join(numbered))
-        set_field("synonyms", ", ".join(sense.synonyms[: self.cfg["max_synonyms"]]))
-
-    def _download_and_set_media(self, note, sense: Sense, fmap: Dict[str, List[str]]):
-        """Download audio/picture and write the corresponding field tags."""
-
-        def set_field(key: str, value: str):
-            names = fmap.get(key) or []
-            if isinstance(names, str):
-                names = [n.strip() for n in names.split(",") if n.strip()]
-            for name in names:
-                if name in note:
-                    if not value:
-                        continue
-                    if note[name]:
-                        note[name] = f"{note[name]}<br>{value}"
-                    else:
-                        note[name] = value
-
-        # audio
-        audio_tag = ""
-        audio_url = self._choose_audio(sense.audio_urls)
-        if audio_url:
-            try:
-                filename, _ = download_to_media(audio_url)
-                audio_tag = f"[sound:{filename}]"
-            except Exception as e:
-                logger.error("Audio download failed: %s (url=%s)", e, audio_url)
-                showWarning(f"Audio download failed: {e}")
-        set_field("audio", audio_tag)
-
-        # picture
-        pic_tag = ""
-        if sense.picture_url:
-            try:
-                fname, _ = download_to_media(
-                    sense.picture_url,
-                    referer=sense.picture_referer,
-                    fallback_url=sense.picture_thumb_url,
-                    fallback_referer=sense.picture_referer,
-                )
-                pic_tag = f'<img src="{fname}">'
-            except Exception as e:
-                logger.error("Image download failed: %s (url=%s)", e, sense.picture_url)
-                if sense.picture_thumb_bytes:
-                    try:
-                        fname, _ = save_bytes_to_media(
-                            sense.picture_thumb_bytes,
-                            sense.picture_thumb_url or sense.picture_url,
-                            "image/*",
-                        )
-                        pic_tag = f'<img src="{fname}">'
-                    except Exception as thumb_err:
-                        logger.error("Thumbnail fallback save failed: %s (url=%s)", thumb_err, sense.picture_url)
-                        showWarning(f"Image download failed: {e}")
-                else:
-                    showWarning(f"Image download failed: {e}")
-        set_field("picture", pic_tag)
-
-    @staticmethod
-    def _add_note_to_col(col, note, deck_id):
-        """Add note via the appropriate Anki API (handles version differences)."""
-        added = False
-        if hasattr(col, "add_note"):
-            try:
-                col.add_note(note, deck_id=deck_id)
-                added = True
-            except TypeError:
-                try:
-                    col.add_note(note)
-                    added = True
-                except Exception:
-                    pass
-        if not added:
-            try:
-                col.addNote(note, deck_id)
-            except TypeError:
-                col.addNote(note)
 
     # ---------- Dialect helpers ----------
     def _choose_audio(self, audio_map: Dict[str, str]) -> Optional[str]:

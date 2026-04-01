@@ -4,7 +4,7 @@ import re
 from typing import Dict, List, Optional
 from urllib.parse import quote
 
-from ..config import DEFAULT_CONFIG
+from ..defaults import DEFAULT_CONFIG
 from ..exceptions import FetchError, MissingDependencyError
 from ..http_client import USER_AGENT, require_bs4, require_requests
 from ..logger import get_logger

@@ -21,6 +21,7 @@ from aqt.qt import (
 )
 from aqt.utils import tooltip
 
+from ..anki.sync import run_manual_import, run_pair_and_sync, run_push_manifest
 from ..config import DEFAULT_CONFIG, PRESET_PAYLOAD_KEYS, get_config, save_config
 from ..fetchers import get_fetchers
 from ..image_search import DEFAULT_IMAGE_PROVIDER, get_image_provider_choices
@@ -193,6 +194,38 @@ class SettingsDialog(QDialog):
             idx = 0
         self.log_level_combo.setCurrentIndex(idx)
 
+        sync_cfg = self.cfg.get("telegram_sync", {}) if isinstance(self.cfg.get("telegram_sync"), dict) else {}
+        self.sync_server_url = QLineEdit(str(sync_cfg.get("server_url") or ""))
+        self.sync_bootstrap_token = QLineEdit(str(sync_cfg.get("bootstrap_token") or ""))
+        self.sync_device_label = QLineEdit(str(sync_cfg.get("device_label") or "main-desktop"))
+        self.sync_device_token = QLineEdit(str(sync_cfg.get("device_token") or ""))
+        self.sync_device_token.setReadOnly(True)
+        self.sync_auto_pull = QCheckBox("Import pending Telegram drafts when Anki starts")
+        self.sync_auto_pull.setChecked(bool(sync_cfg.get("auto_pull_on_startup", True)))
+        self.sync_auto_push = QCheckBox("Push presets/decks/duplicate index when saving settings")
+        self.sync_auto_push.setChecked(bool(sync_cfg.get("auto_push_manifest", True)))
+        self.sync_interval = QComboBox()
+        for minutes, label in [
+            (0, "Disabled"),
+            (5, "Every 5 minutes"),
+            (15, "Every 15 minutes"),
+            (30, "Every 30 minutes"),
+            (60, "Every hour"),
+        ]:
+            self.sync_interval.addItem(label, minutes)
+        interval = int(sync_cfg.get("pull_interval_minutes") or 0)
+        interval_idx = self.sync_interval.findData(interval)
+        if interval_idx == -1:
+            self.sync_interval.addItem(f"Every {interval} minutes", interval)
+            interval_idx = self.sync_interval.findData(interval)
+        self.sync_interval.setCurrentIndex(max(0, interval_idx))
+        self.sync_pair_btn = QPushButton("Pair Desktop")
+        self.sync_push_btn = QPushButton("Push Manifest")
+        self.sync_import_btn = QPushButton("Import Pending")
+        self.sync_pair_btn.clicked.connect(self.on_sync_pair)
+        self.sync_push_btn.clicked.connect(self.on_sync_push)
+        self.sync_import_btn.clicked.connect(lambda: run_manual_import(parent=self))
+
         # buttons
         save_btn = QPushButton("Save")
         cancel_btn = QPushButton("Close")
@@ -245,6 +278,25 @@ class SettingsDialog(QDialog):
         form.addWidget(QLabel("Logging:"))
         form.addWidget(QLabel("Log level (WARNING = quiet, DEBUG = verbose):"))
         form.addWidget(self.log_level_combo)
+
+        form.addWidget(QLabel("Telegram sync:"))
+        form.addWidget(QLabel("Server URL:"))
+        form.addWidget(self.sync_server_url)
+        form.addWidget(QLabel("Bootstrap token (used once for pairing):"))
+        form.addWidget(self.sync_bootstrap_token)
+        form.addWidget(QLabel("Desktop label:"))
+        form.addWidget(self.sync_device_label)
+        form.addWidget(QLabel("Device token:"))
+        form.addWidget(self.sync_device_token)
+        form.addWidget(self.sync_auto_pull)
+        form.addWidget(QLabel("Background import interval:"))
+        form.addWidget(self.sync_interval)
+        form.addWidget(self.sync_auto_push)
+        sync_buttons = QHBoxLayout()
+        sync_buttons.addWidget(self.sync_pair_btn)
+        sync_buttons.addWidget(self.sync_push_btn)
+        sync_buttons.addWidget(self.sync_import_btn)
+        form.addLayout(sync_buttons)
 
         # field mappings
         form.addWidget(QLabel("Field mapping (type or pick from dropdown; comma-separated):"))
@@ -681,15 +733,41 @@ class SettingsDialog(QDialog):
                 self.us_first.setChecked(True)
 
     def on_save(self):
+        self._save_current_settings_to_config()
+        if self.sync_auto_push.isChecked() and self.sync_server_url.text().strip() and self.sync_device_token.text().strip():
+            run_push_manifest(parent=self)
+        tooltip("Settings saved.", parent=self)
+        self.accept()
+
+    def _current_telegram_sync_payload(self) -> Dict:
+        return {
+            "server_url": self.sync_server_url.text().strip(),
+            "bootstrap_token": self.sync_bootstrap_token.text().strip(),
+            "device_token": self.sync_device_token.text().strip(),
+            "device_label": self.sync_device_label.text().strip() or "main-desktop",
+            "auto_pull_on_startup": self.sync_auto_pull.isChecked(),
+            "pull_interval_minutes": int(self.sync_interval.currentData() or 0),
+            "auto_push_manifest": self.sync_auto_push.isChecked(),
+        }
+
+    def _save_current_settings_to_config(self) -> None:
         self._store_controls_into_preset(self._editing_preset_id)
         self._ensure_presets()
         self.language_default_presets = self._collect_language_default_presets()
+        telegram_sync = self._current_telegram_sync_payload()
         logger.info("Saving settings (presets=%d)", len(self.presets))
         save_config(
             {
                 "presets": self.presets,
                 "language_default_presets": self.language_default_presets,
+                "telegram_sync": telegram_sync,
             }
         )
-        tooltip("Settings saved.", parent=self)
-        self.accept()
+
+    def on_sync_pair(self):
+        self._save_current_settings_to_config()
+        run_pair_and_sync(parent=self)
+
+    def on_sync_push(self):
+        self._save_current_settings_to_config()
+        run_push_manifest(parent=self)
