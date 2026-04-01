@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
 SERVICE_NAME="${SERVICE_NAME:-cambridge-fetch-bot.service}"
