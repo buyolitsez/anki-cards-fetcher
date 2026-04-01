@@ -25,7 +25,7 @@ class WiktionaryFetcher(BaseWiktionaryFetcher):
     LABEL = "ru.wiktionary.org (ru)"
     WIKI_BASE = "https://ru.wiktionary.org/wiki/{word}"
     API_BASE = "https://ru.wiktionary.org/w/api.php"
-    KAIKKI_BASE = "https://kaikki.org/dictionary/Russian/meaning/{one}/{two}/{word}.html"
+    KAIKKI_BASE = "https://kaikki.org/ruwiktionary/%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9/meaning/{one}/{two}/{word}.html"
     TARGET_LANGUAGE = "Русский"
     WIKI_REFERER = "https://ru.wiktionary.org/"
 
