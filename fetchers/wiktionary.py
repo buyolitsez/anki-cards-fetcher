@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import html as html_lib
+import json
 import re
+from urllib.parse import quote
 from typing import List, Optional
 
-from ..http_client import require_bs4
+from ..exceptions import FetchError
+from ..http_client import USER_AGENT, require_bs4, require_requests
 from ..logger import get_logger
 from ..models import Sense
 from .wiktionary_common import BaseWiktionaryFetcher
@@ -21,16 +25,25 @@ class WiktionaryFetcher(BaseWiktionaryFetcher):
     LABEL = "ru.wiktionary.org (ru)"
     WIKI_BASE = "https://ru.wiktionary.org/wiki/{word}"
     API_BASE = "https://ru.wiktionary.org/w/api.php"
+    KAIKKI_BASE = "https://kaikki.org/dictionary/Russian/meaning/{one}/{two}/{word}.html"
     TARGET_LANGUAGE = "Русский"
     WIKI_REFERER = "https://ru.wiktionary.org/"
 
     # Override fetch to also extract syllables (ru-specific)
     def fetch(self, word: str) -> List[Sense]:
-        senses = super().fetch(word)
-        # Re-parse syllables from the page (we need the lang_root).
-        # Instead of re-fetching, we extract syllables in _parse_senses via
-        # self._last_lang_root which we stash during the base class flow.
-        return senses
+        try:
+            senses = super().fetch(word)
+        except FetchError as exc:
+            if "403" not in str(exc):
+                raise
+            logger.warning("ru.wiktionary returned 403 for '%s', trying Kaikki fallback", word)
+            senses = self._fetch_from_kaikki(word)
+            if senses:
+                return senses
+            raise
+        if senses:
+            return senses
+        return self._fetch_from_kaikki(word) or senses
 
     def _parse_senses(self, lang_root) -> List[Sense]:
         senses = self._parse_definitions(lang_root)
@@ -223,3 +236,159 @@ class WiktionaryFetcher(BaseWiktionaryFetcher):
         if hl:
             return hl.get_text(strip=True)
         return node.get_text(strip=True)
+
+    def _fetch_from_kaikki(self, word: str) -> List[Sense]:
+        requests = require_requests()
+        entries = self._load_kaikki_entries(word)
+        if not entries:
+            return []
+
+        senses: List[Sense] = []
+        seen: set[tuple[str, str, tuple[str, ...], tuple[str, ...]]] = set()
+        for entry in entries:
+            pos = self._clean_kaikki_text(entry.get("pos"))
+            ipa_map = self._kaikki_ipa_map(entry)
+            syllables = self._kaikki_syllables(entry)
+            shared_synonyms = self._kaikki_synonyms(entry)
+            for raw_sense in entry.get("senses") or []:
+                glosses = raw_sense.get("glosses") if isinstance(raw_sense, dict) else []
+                definition = ""
+                if isinstance(glosses, list):
+                    definition = next((self._clean_kaikki_text(item) for item in glosses if self._clean_kaikki_text(item)), "")
+                if not definition:
+                    definition = self._clean_kaikki_text((raw_sense or {}).get("raw_glosses"))
+                if not definition:
+                    continue
+                examples = self._kaikki_examples(raw_sense)
+                synonyms = shared_synonyms or self._kaikki_synonyms(raw_sense)
+                key = (
+                    definition.casefold(),
+                    pos.casefold(),
+                    tuple(example.casefold() for example in examples),
+                    tuple(item.casefold() for item in synonyms),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                senses.append(
+                    Sense(
+                        definition=definition,
+                        examples=examples,
+                        synonyms=synonyms,
+                        pos=pos,
+                        syllables=syllables,
+                        ipa=ipa_map.copy(),
+                    )
+                )
+        logger.info("Kaikki fallback: found %d senses for '%s'", len(senses), word)
+        return senses
+
+    def _load_kaikki_entries(self, word: str) -> List[dict]:
+        requests = require_requests()
+        text = (word or "").strip()
+        if not text:
+            return []
+        first = quote(text[:1])
+        first_two = quote(text[:2] if len(text) > 1 else text[:1])
+        full = quote(text)
+        url = self.KAIKKI_BASE.format(one=first, two=first_two, word=full)
+        try:
+            resp = requests.get(
+                url,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "text/html,application/xhtml+xml",
+                    "Accept-Language": "en-US,en;q=0.9,ru;q=0.8",
+                },
+                timeout=20,
+            )
+        except Exception as exc:
+            logger.warning("Kaikki request failed for '%s': %s", word, exc)
+            return []
+        if resp.status_code == 404:
+            return []
+        if resp.status_code >= 400:
+            logger.warning("Kaikki returned HTTP %d for '%s'", resp.status_code, word)
+            return []
+        resp.encoding = "utf-8"
+        blocks = re.findall(r"<pre[^>]*>(.*?)</pre>", resp.text, flags=re.S | re.I)
+        decoder = json.JSONDecoder()
+        entries: List[dict] = []
+        for block in blocks:
+            unescaped = html_lib.unescape(block).strip()
+            if not unescaped:
+                continue
+            try:
+                parsed, _end = decoder.raw_decode(unescaped)
+            except Exception:
+                continue
+            if isinstance(parsed, dict) and self._clean_kaikki_text(parsed.get("word")) == text:
+                entries.append(parsed)
+        return entries
+
+    @staticmethod
+    def _clean_kaikki_text(value) -> str:
+        if not isinstance(value, str):
+            return ""
+        text = html_lib.unescape(value).replace("\u00a0", " ")
+        return " ".join(text.split()).strip()
+
+    def _kaikki_examples(self, raw_sense: dict) -> List[str]:
+        examples: List[str] = []
+        seen: set[str] = set()
+        for item in raw_sense.get("examples") or []:
+            if not isinstance(item, dict):
+                continue
+            text = self._clean_kaikki_text(item.get("text"))
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            examples.append(text)
+        return examples
+
+    def _kaikki_synonyms(self, source: dict) -> List[str]:
+        out: List[str] = []
+        seen: set[str] = set()
+        for item in source.get("synonyms") or []:
+            if isinstance(item, dict):
+                text = self._clean_kaikki_text(item.get("word"))
+            else:
+                text = self._clean_kaikki_text(item)
+            if not text:
+                continue
+            key = text.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(text)
+        return out
+
+    def _kaikki_ipa_map(self, entry: dict) -> dict[str, str]:
+        ipa_map: dict[str, str] = {}
+        for sound in entry.get("sounds") or []:
+            if not isinstance(sound, dict):
+                continue
+            ipa = self._clean_kaikki_text(sound.get("ipa"))
+            if not ipa:
+                continue
+            tags = [self._clean_kaikki_text(tag).lower() for tag in sound.get("tags") or [] if self._clean_kaikki_text(tag)]
+            if "uk" in tags:
+                ipa_map.setdefault("uk", ipa)
+            elif "us" in tags:
+                ipa_map.setdefault("us", ipa)
+            else:
+                ipa_map.setdefault("default", ipa)
+        return ipa_map
+
+    def _kaikki_syllables(self, entry: dict) -> Optional[str]:
+        for hyphenation in entry.get("hyphenation") or []:
+            if isinstance(hyphenation, dict):
+                value = self._clean_kaikki_text(hyphenation.get("hyphenation"))
+            else:
+                value = self._clean_kaikki_text(hyphenation)
+            if value:
+                return value
+        return None
