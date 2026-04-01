@@ -48,6 +48,8 @@ pip install -U pip
 pip install -e '.[server,telegram]'
 ```
 
+Python 3.10 is supported. You do not need Python 3.11 for this repo.
+
 ## 4. Create the server environment file
 
 Create `/opt/cambridge_fetch/.env`:

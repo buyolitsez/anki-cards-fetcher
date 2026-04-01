@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "cambridge-fetch"
 version = "1.1.0"
 description = "Anki dictionary fetcher with Telegram queue bridge"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "requests>=2.31",
   "beautifulsoup4>=4.12",
