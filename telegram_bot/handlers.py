@@ -8,10 +8,8 @@ from telegram.ext import ContextTypes
 from ..core.duplicates import find_duplicate_words, normalize_duplicate_text
 from ..core.services import build_note_draft, format_note_preview, resolve_preset, search_word
 from ..core.types import CandidateMatch, ResolvedPreset, SearchRequest
-from ..fetchers import get_fetcher_by_id
 from ..language_detection import detect_word_language
 from ..server.repository import Repository
-from ..typo import collect_validated_typo_suggestions
 
 PAGE_SIZE = 5
 
@@ -64,6 +62,25 @@ def _format_preset_details(*, title: str, preset: ResolvedPreset, manifest: Dict
     return "\n".join(lines)
 
 
+def _help_text() -> str:
+    return "\n".join(
+        [
+            "Send me a word like fence or забор.",
+            "",
+            "Commands:",
+            "/help - show this help",
+            "/preset - show current preset, deck, note type, and sources",
+            "/preset <word> - show the effective preset for a word",
+            "",
+            "Flow:",
+            "1. Send a word",
+            "2. Choose a result",
+            "3. Confirm Add",
+            "4. Open desktop Anki to import queued notes",
+        ]
+    )
+
+
 def _render_candidates(session: Dict, page: int) -> tuple[str, InlineKeyboardMarkup]:
     candidates = session.get("candidates") or []
     word = session.get("word") or ""
@@ -101,42 +118,6 @@ def _render_candidates(session: Dict, page: int) -> tuple[str, InlineKeyboardMar
     return "\n".join(lines), InlineKeyboardMarkup(keyboard)
 
 
-def _render_suggestions(session: Dict, page: int) -> tuple[str, InlineKeyboardMarkup]:
-    suggestions = session.get("suggestions") or []
-    word = session.get("word") or ""
-    preset: ResolvedPreset = session["preset"]
-    errors = session.get("errors") or []
-    total_pages = max(1, (len(suggestions) + PAGE_SIZE - 1) // PAGE_SIZE)
-    safe_page = max(0, min(page, total_pages - 1))
-    start = safe_page * PAGE_SIZE
-    end = start + PAGE_SIZE
-    lines = [
-        f"No exact match for {word}",
-        f"Preset: {preset.preset_name}",
-        "Try one of these suggestions:",
-    ]
-    if errors:
-        lines.append("")
-        lines.append("Source errors:")
-        lines.extend(errors[:3])
-    keyboard = []
-    for idx, suggestion in enumerate(suggestions[start:end], start=start):
-        keyboard.append([InlineKeyboardButton(str(suggestion), callback_data=f"sug:{idx}:{safe_page}")])
-    nav = []
-    if safe_page > 0:
-        nav.append(InlineKeyboardButton("Prev", callback_data=f"sugpage:{safe_page - 1}"))
-    if safe_page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next", callback_data=f"sugpage:{safe_page + 1}"))
-    if nav:
-        keyboard.append(nav)
-    keyboard.append([InlineKeyboardButton("Change preset", callback_data="preset:list:0")])
-    keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel")])
-    lines.append("")
-    lines.append(f"Page {safe_page + 1}/{total_pages}")
-    session["view_mode"] = "suggestions"
-    return "\n".join(lines), InlineKeyboardMarkup(keyboard)
-
-
 def _render_preset_picker(session: Dict, page: int) -> tuple[str, InlineKeyboardMarkup]:
     manifest = session.get("manifest") or {}
     presets = manifest.get("presets") or []
@@ -155,42 +136,8 @@ def _render_preset_picker(session: Dict, page: int) -> tuple[str, InlineKeyboard
         nav.append(InlineKeyboardButton("Next", callback_data=f"preset:list:{safe_page + 1}"))
     if nav:
         keyboard.append(nav)
-    keyboard.append([InlineKeyboardButton("Back", callback_data="back:view")])
+    keyboard.append([InlineKeyboardButton("Back", callback_data="back:results")])
     return "Choose preset", InlineKeyboardMarkup(keyboard)
-
-
-def _typo_max_results(preset_payload: Dict) -> int:
-    typo_cfg = preset_payload.get("typo_suggestions") if isinstance(preset_payload.get("typo_suggestions"), dict) else {}
-    try:
-        value = int(typo_cfg.get("max_results") or 12)
-    except Exception:
-        value = 12
-    return max(1, min(value, 40))
-
-
-def _collect_bot_suggestions(*, word: str, resolved: ResolvedPreset) -> list[str]:
-    typo_cfg = resolved.payload.get("typo_suggestions") if isinstance(resolved.payload.get("typo_suggestions"), dict) else {}
-    if not bool(typo_cfg.get("enabled", True)):
-        return []
-    cfg_snapshot = dict(resolved.payload or {})
-
-    def validate_word(candidate: str) -> bool:
-        for source_id in resolved.sources:
-            try:
-                if get_fetcher_by_id(source_id, cfg_snapshot).fetch(candidate):
-                    return True
-            except Exception:
-                continue
-        return False
-
-    result = collect_validated_typo_suggestions(
-        word=word,
-        source_ids=resolved.sources,
-        max_results=_typo_max_results(cfg_snapshot),
-        suggest_for_query=lambda source_id, query, fetch_limit: get_fetcher_by_id(source_id, cfg_snapshot).suggest(query, limit=fetch_limit),
-        validate_word=validate_word,
-    )
-    return result.suggestions
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -198,9 +145,15 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not user or not _is_allowed(user.id, context):
         return
     _repo(context).ensure_telegram_user(user.id, allowed=True)
-    await update.effective_message.reply_text(
-        "Send me a word like fence or забор. I will search your synced presets and queue the approved note for desktop import."
-    )
+    await update.effective_message.reply_text(_help_text())
+
+
+async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not user or not update.effective_message or not _is_allowed(user.id, context):
+        return
+    _repo(context).ensure_telegram_user(user.id, allowed=True)
+    await update.effective_message.reply_text(_help_text())
 
 
 async def handle_preset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -269,25 +222,8 @@ async def _perform_search(
     duplicate_index = repo.duplicate_index_for_client(int(manifest["client_id"]))
     result = search_word(SearchRequest(word=word, source_ids=resolved.sources, cfg=resolved.payload))
     if not result.candidates:
-        suggestions = _collect_bot_suggestions(word=word, resolved=resolved)
-        if not suggestions:
-            details = "\n".join(result.errors[:4]) if result.errors else "No definitions found."
-            await update.effective_message.reply_text(details)
-            return
-        session = _session(context)
-        session.clear()
-        session.update(
-            {
-                "word": word,
-                "manifest": manifest,
-                "preset": resolved,
-                "suggestions": suggestions,
-                "duplicate_index": duplicate_index.get("items") or {},
-                "errors": result.errors[:],
-            }
-        )
-        text, markup = _render_suggestions(session, 0)
-        await update.effective_message.reply_text(text, reply_markup=markup)
+        details = "\n".join(result.errors[:4]) if result.errors else "No definitions found."
+        await update.effective_message.reply_text(details)
         return
 
     session = _session(context)
@@ -363,17 +299,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(text, reply_markup=markup)
         return
 
-    if data.startswith("sugpage:"):
-        page = int(data.split(":")[1])
-        text, markup = _render_suggestions(session, page)
-        await query.edit_message_text(text, reply_markup=markup)
-        return
-
-    if data == "back:view":
-        if session.get("view_mode") == "suggestions":
-            text, markup = _render_suggestions(session, 0)
-        else:
-            text, markup = _render_candidates(session, 0)
+    if data == "back:results":
+        text, markup = _render_candidates(session, 0)
         await query.edit_message_text(text, reply_markup=markup)
         return
 
@@ -390,22 +317,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             context=context,
             word=str(session.get("word") or ""),
             explicit_preset_id=preset_id,
-        )
-        await query.message.delete()
-        return
-
-    if data.startswith("sug:"):
-        _, idx_raw, _page_raw = data.split(":")
-        index = int(idx_raw)
-        suggestions: list[str] = session.get("suggestions") or []
-        preset: ResolvedPreset = session.get("preset")
-        if index < 0 or index >= len(suggestions) or not preset:
-            return
-        await _perform_search(
-            update=update,
-            context=context,
-            word=str(suggestions[index]),
-            explicit_preset_id=preset.preset_id,
         )
         await query.message.delete()
         return

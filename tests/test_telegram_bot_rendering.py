@@ -6,7 +6,7 @@ telegram = pytest.importorskip("telegram")
 
 from cambridge_fetch.core.types import CandidateMatch, ResolvedPreset
 from cambridge_fetch.models import Sense
-from cambridge_fetch.telegram_bot.handlers import _normalize_query_word, _render_candidates, _render_suggestions, _format_preset_details
+from cambridge_fetch.telegram_bot.handlers import _format_preset_details, _help_text, _normalize_query_word, _render_candidates
 
 
 def test_render_candidates_includes_target_metadata():
@@ -43,37 +43,6 @@ def test_render_candidates_includes_target_metadata():
     assert markup.inline_keyboard[0][0].callback_data == "cand:0:0"
 
 
-def test_render_suggestions_paginates_and_uses_dropdown_callbacks():
-    session = {
-        "word": "fnec",
-        "preset": ResolvedPreset(
-            preset_id="default",
-            preset_name="Default",
-            detected_language="en",
-            note_type="Basic",
-            deck="Words",
-            sources=["cambridge"],
-            field_map={},
-            wiktionary_field_map={},
-            dialect_priority=["us", "uk"],
-            max_examples=2,
-            max_synonyms=2,
-            payload={},
-        ),
-        "suggestions": ["fence", "fennec", "finer", "fine", "face", "fancy"],
-        "errors": ["cambridge: HTTP 404"],
-    }
-
-    text, markup = _render_suggestions(session, 0)
-
-    assert "No exact match for fnec" in text
-    assert "Try one of these suggestions:" in text
-    assert "cambridge: HTTP 404" in text
-    assert markup.inline_keyboard[0][0].callback_data == "sug:0:0"
-    assert markup.inline_keyboard[4][0].callback_data == "sug:4:0"
-    assert markup.inline_keyboard[5][0].callback_data == "sugpage:1"
-
-
 def test_normalize_query_word_lowercases_input():
     assert _normalize_query_word("  FeNcE ") == "fence"
     assert _normalize_query_word(" ПРИПАРКА ") == "припарка"
@@ -105,3 +74,11 @@ def test_format_preset_details_lists_sources_and_targets():
     assert "Sources: cambridge, wiktionary_en" in text
     assert "Deck: Words" in text
     assert "Note type: Basic" in text
+
+
+def test_help_text_lists_commands():
+    text = _help_text()
+
+    assert "/help - show this help" in text
+    assert "/preset - show current preset, deck, note type, and sources" in text
+    assert "/preset <word> - show the effective preset for a word" in text
