@@ -20,6 +20,22 @@ def test_resolve_preset_prefers_explicit_preset():
     assert resolved.sources == ["cambridge"]
 
 
+def test_resolve_preset_uses_last_used_before_active():
+    manifest = {
+        "active_preset_id": "default",
+        "language_default_presets": {"en": None, "ru": None},
+        "presets": [
+            {"id": "default", "name": "English", "sources": ["cambridge"], "note_type": "Basic", "deck": "English"},
+            {"id": "alt", "name": "Alt", "sources": ["wiktionary_en"], "note_type": "Basic", "deck": "Alt"},
+        ],
+    }
+
+    resolved = resolve_preset("fence", None, manifest, last_used_preset_id="alt")
+
+    assert resolved.preset_id == "alt"
+    assert resolved.sources == ["wiktionary_en"]
+
+
 def test_build_note_draft_renders_field_values():
     preset = resolve_preset(
         "fence",

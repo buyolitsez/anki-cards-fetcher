@@ -39,6 +39,31 @@ def _session(context: ContextTypes.DEFAULT_TYPE) -> Dict:
     return context.user_data.setdefault("search_session", {})
 
 
+def _preset_by_id(manifest: Dict, preset_id: str | None) -> Dict:
+    target = str(preset_id or "").strip()
+    for preset in manifest.get("presets") or []:
+        if str(preset.get("id") or "").strip() == target:
+            return dict(preset)
+    return {}
+
+
+def _format_preset_details(*, title: str, preset: ResolvedPreset, manifest: Dict, last_used_preset_id: str | None = None) -> str:
+    en_default = (manifest.get("language_default_presets") or {}).get("en")
+    ru_default = (manifest.get("language_default_presets") or {}).get("ru")
+    lines = [
+        title,
+        f"Preset: {preset.preset_name} ({preset.preset_id})",
+        f"Deck: {preset.deck or '-'}",
+        f"Note type: {preset.note_type or '-'}",
+        f"Sources: {', '.join(preset.sources) if preset.sources else '-'}",
+        f"Detected language: {preset.detected_language or '-'}",
+        f"Language defaults: en -> {en_default or '-'}, ru -> {ru_default or '-'}",
+        f"Desktop active preset: {manifest.get('active_preset_id') or '-'}",
+        f"Bot last used preset: {last_used_preset_id or '-'}",
+    ]
+    return "\n".join(lines)
+
+
 def _render_candidates(session: Dict, page: int) -> tuple[str, InlineKeyboardMarkup]:
     candidates = session.get("candidates") or []
     word = session.get("word") or ""
@@ -178,6 +203,48 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+async def handle_preset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not user or not update.effective_message or not _is_allowed(user.id, context):
+        return
+    repo = _repo(context)
+    manifest = repo.latest_manifest()
+    if not manifest:
+        await update.effective_message.reply_text("No desktop manifest uploaded yet. Pair and sync the Anki add-on first.")
+        return
+    user_row = repo.telegram_user(user.id)
+    last_used_preset_id = str(user_row.get("last_used_preset_id") or "").strip() or None
+    args = getattr(context, "args", None) or []
+    if args:
+        word = _normalize_query_word(" ".join(args))
+        preset = resolve_preset(word, None, manifest, last_used_preset_id=last_used_preset_id)
+        text = _format_preset_details(
+            title=f"Effective preset for {word}",
+            preset=preset,
+            manifest=manifest,
+            last_used_preset_id=last_used_preset_id,
+        )
+    else:
+        base_preset_id = last_used_preset_id or str(manifest.get("active_preset_id") or "").strip() or None
+        base_preset_payload = _preset_by_id(manifest, base_preset_id)
+        if base_preset_payload:
+            preset = resolve_preset(
+                "",
+                str(base_preset_payload.get("id") or ""),
+                manifest,
+                last_used_preset_id=last_used_preset_id,
+            )
+        else:
+            preset = resolve_preset("", None, manifest, last_used_preset_id=last_used_preset_id)
+        text = _format_preset_details(
+            title="Current preset state",
+            preset=preset,
+            manifest=manifest,
+            last_used_preset_id=last_used_preset_id,
+        )
+    await update.effective_message.reply_text(text)
+
+
 async def _perform_search(
     *,
     update: Update,
@@ -196,7 +263,9 @@ async def _perform_search(
         return
 
     repo.ensure_telegram_user(user.id, allowed=True)
-    resolved = resolve_preset(word, explicit_preset_id, manifest)
+    user_row = repo.telegram_user(user.id)
+    last_used_preset_id = str(user_row.get("last_used_preset_id") or "").strip() or None
+    resolved = resolve_preset(word, explicit_preset_id, manifest, last_used_preset_id=last_used_preset_id)
     duplicate_index = repo.duplicate_index_for_client(int(manifest["client_id"]))
     result = search_word(SearchRequest(word=word, source_ids=resolved.sources, cfg=resolved.payload))
     if not result.candidates:

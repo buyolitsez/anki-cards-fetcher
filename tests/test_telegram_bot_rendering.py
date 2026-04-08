@@ -6,7 +6,7 @@ telegram = pytest.importorskip("telegram")
 
 from cambridge_fetch.core.types import CandidateMatch, ResolvedPreset
 from cambridge_fetch.models import Sense
-from cambridge_fetch.telegram_bot.handlers import _normalize_query_word, _render_candidates, _render_suggestions
+from cambridge_fetch.telegram_bot.handlers import _normalize_query_word, _render_candidates, _render_suggestions, _format_preset_details
 
 
 def test_render_candidates_includes_target_metadata():
@@ -77,3 +77,31 @@ def test_render_suggestions_paginates_and_uses_dropdown_callbacks():
 def test_normalize_query_word_lowercases_input():
     assert _normalize_query_word("  FeNcE ") == "fence"
     assert _normalize_query_word(" ПРИПАРКА ") == "припарка"
+
+
+def test_format_preset_details_lists_sources_and_targets():
+    preset = ResolvedPreset(
+        preset_id="default",
+        preset_name="Default",
+        detected_language="en",
+        note_type="Basic",
+        deck="Words",
+        sources=["cambridge", "wiktionary_en"],
+        field_map={},
+        wiktionary_field_map={},
+        dialect_priority=["us", "uk"],
+        max_examples=2,
+        max_synonyms=2,
+        payload={},
+    )
+
+    text = _format_preset_details(
+        title="Current preset state",
+        preset=preset,
+        manifest={"active_preset_id": "default", "language_default_presets": {"en": "default", "ru": "ru"}},
+        last_used_preset_id="default",
+    )
+
+    assert "Sources: cambridge, wiktionary_en" in text
+    assert "Deck: Words" in text
+    assert "Note type: Basic" in text

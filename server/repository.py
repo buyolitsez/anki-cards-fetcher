@@ -192,6 +192,14 @@ class Repository:
                 (preset_id, str(int(telegram_user_id))),
             )
 
+    def telegram_user(self, telegram_user_id: int) -> Dict:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM telegram_users WHERE telegram_user_id = ?",
+                (str(int(telegram_user_id)),),
+            ).fetchone()
+        return dict(row) if row else {}
+
     def enqueue_draft(self, *, client_id: int, telegram_user_id: int, draft: NoteDraft) -> Dict:
         with self._connect() as conn:
             cur = conn.execute(

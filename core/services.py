@@ -29,7 +29,13 @@ def _choose_by_dialect(values: Mapping[str, str], dialect_priority: Sequence[str
     return None, None
 
 
-def resolve_preset(word: str, explicit_preset_id: Optional[str], synced_manifest: Mapping) -> ResolvedPreset:
+def resolve_preset(
+    word: str,
+    explicit_preset_id: Optional[str],
+    synced_manifest: Mapping,
+    *,
+    last_used_preset_id: Optional[str] = None,
+) -> ResolvedPreset:
     manifest_presets = synced_manifest.get("presets") if isinstance(synced_manifest.get("presets"), list) else []
     preset_lookup = {str(item.get("id") or "").strip(): item for item in manifest_presets if isinstance(item, dict)}
     detected_language = detect_word_language(word)
@@ -41,6 +47,9 @@ def resolve_preset(word: str, explicit_preset_id: Optional[str], synced_manifest
             value = mapping.get(detected_language)
             if isinstance(value, str) and value.strip():
                 target_preset_id = value.strip()
+    if not target_preset_id:
+        if isinstance(last_used_preset_id, str) and last_used_preset_id.strip():
+            target_preset_id = last_used_preset_id.strip()
     if not target_preset_id:
         active_id = synced_manifest.get("active_preset_id")
         if isinstance(active_id, str) and active_id.strip():

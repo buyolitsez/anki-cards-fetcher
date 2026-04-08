@@ -51,5 +51,9 @@ def test_repository_pair_manifest_and_queue(tmp_path):
     pending = repo.list_pending(paired["device_token"], limit=10)
     assert pending[0]["id"] == queued["id"]
 
+    repo.ensure_telegram_user(123, allowed=True)
+    repo.set_last_used_preset(123, "default")
+    assert repo.telegram_user(123)["last_used_preset_id"] == "default"
+
     repo.mark_complete(paired["device_token"], queued["id"], 99)
     assert repo.list_pending(paired["device_token"], limit=10) == []
