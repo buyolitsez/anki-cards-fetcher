@@ -31,6 +31,30 @@ class SearchResult:
 
 
 @dataclass(frozen=True)
+class TranslationRequest:
+    source_word: str
+    source_lang: str
+    target_lang: str
+    limit: int = 10
+    cfg: Dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TranslationCandidate:
+    word: str
+    pos: Optional[str] = None
+    gloss: Optional[str] = None
+    source_id: str = ""
+
+
+@dataclass(frozen=True)
+class TranslationResult:
+    source_word: str
+    candidates: List[TranslationCandidate]
+    errors: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ResolvedPreset:
     preset_id: str
     preset_name: str

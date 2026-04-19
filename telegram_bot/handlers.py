@@ -6,8 +6,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ..core.duplicates import find_duplicate_words, normalize_duplicate_text
-from ..core.services import build_note_draft, format_note_preview, resolve_preset, search_word
-from ..core.types import CandidateMatch, ResolvedPreset, SearchRequest
+from ..core.services import build_note_draft, format_note_preview, resolve_preset, search_word, translate_word
+from ..core.types import CandidateMatch, ResolvedPreset, SearchRequest, TranslationCandidate, TranslationRequest
 from ..language_detection import detect_word_language
 from ..server.repository import Repository
 
@@ -69,6 +69,7 @@ def _help_text() -> str:
             "",
             "Commands:",
             "/help - show this help",
+            "/tr <russian word> - translate Russian to English, then continue with normal card selection",
             "/preset - show current preset, deck, note type, and sources",
             "/preset <word> - show the effective preset for a word",
             "",
@@ -118,6 +119,34 @@ def _render_candidates(session: Dict, page: int) -> tuple[str, InlineKeyboardMar
     return "\n".join(lines), InlineKeyboardMarkup(keyboard)
 
 
+def _render_translation_candidates(session: Dict, page: int) -> tuple[str, InlineKeyboardMarkup]:
+    candidates = session.get("translation_candidates") or []
+    source_word = session.get("translation_source_word") or ""
+    total_pages = max(1, (len(candidates) + PAGE_SIZE - 1) // PAGE_SIZE)
+    safe_page = max(0, min(page, total_pages - 1))
+    start = safe_page * PAGE_SIZE
+    end = start + PAGE_SIZE
+    lines = [
+        f"Translations for {source_word}",
+        "Choose the English word to look up:",
+        "",
+    ]
+    keyboard = []
+    for idx, candidate in enumerate(candidates[start:end], start=start):
+        keyboard.append([InlineKeyboardButton(candidate.word, callback_data=f"trsel:{idx}:{safe_page}")])
+    nav = []
+    if safe_page > 0:
+        nav.append(InlineKeyboardButton("Prev", callback_data=f"trpage:{safe_page - 1}"))
+    if safe_page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next", callback_data=f"trpage:{safe_page + 1}"))
+    if nav:
+        keyboard.append(nav)
+    keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel")])
+    lines.append(f"Page {safe_page + 1}/{total_pages}")
+    session["view_mode"] = "translation_results"
+    return "\n".join(lines), InlineKeyboardMarkup(keyboard)
+
+
 def _render_preset_picker(session: Dict, page: int) -> tuple[str, InlineKeyboardMarkup]:
     manifest = session.get("manifest") or {}
     presets = manifest.get("presets") or []
@@ -140,6 +169,19 @@ def _render_preset_picker(session: Dict, page: int) -> tuple[str, InlineKeyboard
     return "Choose preset", InlineKeyboardMarkup(keyboard)
 
 
+def _english_default_preset_id(manifest: Dict) -> Optional[str]:
+    mapping = manifest.get("language_default_presets") if isinstance(manifest, dict) else {}
+    if not isinstance(mapping, dict):
+        return None
+    value = mapping.get("en")
+    text = str(value or "").strip()
+    return text or None
+
+
+def _translate_usage_text() -> str:
+    return "Usage: /tr <russian word>\nExample: /tr багажник"
+
+
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     if not user or not _is_allowed(user.id, context):
@@ -154,6 +196,54 @@ async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     _repo(context).ensure_telegram_user(user.id, allowed=True)
     await update.effective_message.reply_text(_help_text())
+
+
+async def handle_translate_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if not user or not update.effective_message or not _is_allowed(user.id, context):
+        return
+    repo = _repo(context)
+    manifest = repo.latest_manifest()
+    if not manifest:
+        await update.effective_message.reply_text("No desktop manifest uploaded yet. Pair and sync the Anki add-on first.")
+        return
+    args = getattr(context, "args", None) or []
+    if not args:
+        await update.effective_message.reply_text(_translate_usage_text())
+        return
+    word = _normalize_query_word(" ".join(args))
+    if not word or detect_word_language(word) != "ru":
+        await update.effective_message.reply_text(_translate_usage_text())
+        return
+
+    repo.ensure_telegram_user(user.id, allowed=True)
+    result = translate_word(
+        TranslationRequest(
+            source_word=word,
+            source_lang="ru",
+            target_lang="en",
+            limit=20,
+            cfg={},
+        )
+    )
+    if not result.candidates:
+        details = "\n".join(result.errors[:4]) if result.errors else "No translations found."
+        await update.effective_message.reply_text(details)
+        return
+
+    session = _session(context)
+    session.clear()
+    session.update(
+        {
+            "mode": "translation_pick",
+            "manifest": manifest,
+            "translation_source_word": word,
+            "translation_candidates": result.candidates,
+            "translation_errors": result.errors[:],
+        }
+    )
+    text, markup = _render_translation_candidates(session, 0)
+    await update.effective_message.reply_text(text, reply_markup=markup)
 
 
 async def handle_preset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -299,6 +389,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(text, reply_markup=markup)
         return
 
+    if data.startswith("trpage:"):
+        page = int(data.split(":")[1])
+        text, markup = _render_translation_candidates(session, page)
+        await query.edit_message_text(text, reply_markup=markup)
+        return
+
     if data == "back:results":
         text, markup = _render_candidates(session, 0)
         await query.edit_message_text(text, reply_markup=markup)
@@ -316,6 +412,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             update=update,
             context=context,
             word=str(session.get("word") or ""),
+            explicit_preset_id=preset_id,
+        )
+        await query.message.delete()
+        return
+
+    if data.startswith("trsel:"):
+        _, idx_raw, _page_raw = data.split(":")
+        index = int(idx_raw)
+        candidates: list[TranslationCandidate] = session.get("translation_candidates") or []
+        if index < 0 or index >= len(candidates):
+            return
+        manifest = repo.latest_manifest()
+        preset_id = _english_default_preset_id(manifest)
+        await _perform_search(
+            update=update,
+            context=context,
+            word=candidates[index].word,
             explicit_preset_id=preset_id,
         )
         await query.message.delete()

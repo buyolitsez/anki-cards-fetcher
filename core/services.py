@@ -8,7 +8,16 @@ from ..language_detection import detect_word_language
 from ..models import Sense
 from .duplicates import normalize_duplicate_text
 from .source_selection import ensure_source_selection_list
-from .types import CandidateMatch, NoteDraft, ResolvedPreset, SearchRequest, SearchResult
+from .translation import get_translator
+from .types import (
+    CandidateMatch,
+    NoteDraft,
+    ResolvedPreset,
+    SearchRequest,
+    SearchResult,
+    TranslationRequest,
+    TranslationResult,
+)
 
 
 def summarize_candidate(candidate: CandidateMatch | Sense, max_examples: int = 1, max_synonyms: int = 2) -> str:
@@ -117,6 +126,21 @@ def search_word(request: SearchRequest) -> SearchResult:
             candidates.append(match)
 
     return SearchResult(word=request.word, source_ids=source_ids, candidates=candidates, errors=errors)
+
+
+def translate_word(request: TranslationRequest) -> TranslationResult:
+    try:
+        translator = get_translator(request.source_lang, request.target_lang, request.cfg)
+    except Exception as exc:
+        return TranslationResult(source_word=request.source_word, candidates=[], errors=[str(exc)])
+    try:
+        return translator.translate(request)
+    except Exception as exc:
+        return TranslationResult(
+            source_word=request.source_word,
+            candidates=[],
+            errors=[f"{translator.ID}: {exc}"],
+        )
 
 
 def _append_field(field_values: Dict[str, str], target_fields: Sequence[str], value: str) -> None:

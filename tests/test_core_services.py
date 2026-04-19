@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from cambridge_fetch.core.services import build_note_draft, resolve_preset
+from cambridge_fetch.core.services import build_note_draft, resolve_preset, translate_word
+from cambridge_fetch.core.translation import KaikkiRuEnTranslator
+from cambridge_fetch.core.types import TranslationRequest
 from cambridge_fetch.models import Sense
 
 
@@ -84,3 +86,36 @@ def test_build_note_draft_renders_field_values():
     assert "1. A wooden fence." in draft.field_values["Examples"]
     assert draft.audio_url == "https://example.com/fence.mp3"
     assert draft.picture_url == "https://example.com/fence.jpg"
+
+
+def test_translate_word_returns_ru_to_en_candidates(monkeypatch):
+    def fake_load_entries(self, word: str):
+        assert word == "багажник"
+        return [
+            {
+                "pos": "noun",
+                "translations": [
+                    {"lang_code": "en", "word": "luggage", "other": "boot"},
+                    {"lang_code": "en", "word": "rear", "other": "trunk"},
+                    {"lang_code": "en", "word": "carrier"},
+                ],
+            }
+        ]
+
+    monkeypatch.setattr(KaikkiRuEnTranslator, "_load_entries", fake_load_entries)
+
+    result = translate_word(
+        TranslationRequest(source_word="багажник", source_lang="ru", target_lang="en", limit=10, cfg={})
+    )
+
+    assert [candidate.word for candidate in result.candidates] == ["boot", "trunk", "carrier"]
+    assert result.errors == []
+
+
+def test_translate_word_returns_unsupported_direction_error():
+    result = translate_word(
+        TranslationRequest(source_word="fence", source_lang="en", target_lang="ru", limit=5, cfg={})
+    )
+
+    assert result.candidates == []
+    assert result.errors == ["Unsupported translation direction: en -> ru"]

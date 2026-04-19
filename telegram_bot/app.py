@@ -10,6 +10,7 @@ from .handlers import (
     handle_preset,
     handle_start,
     handle_text_message,
+    handle_translate_command,
 )
 
 
@@ -25,6 +26,7 @@ def build_application(
     app.bot_data["repository"] = repository
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("help", handle_help))
+    app.add_handler(CommandHandler("tr", handle_translate_command))
     app.add_handler(CommandHandler("preset", handle_preset))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
