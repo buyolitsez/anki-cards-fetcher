@@ -13,6 +13,7 @@ from aqt.qt import (
     QDialog,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -23,7 +24,7 @@ from aqt.qt import (
 )
 from aqt.utils import showInfo, showWarning, tooltip
 
-from ..anki.importer import add_note_from_draft
+from ..anki.importer import PictureDownloadError, add_note_from_draft
 from ..config import get_active_preset, get_config, save_config
 from ..core.services import build_note_draft, format_note_preview
 from ..core.types import ResolvedPreset
@@ -1056,6 +1057,23 @@ class FetchDialog(QDialog):
         draft = build_note_draft(self.word_edit.text().strip(), source_id, sense, resolved_preset)
         try:
             note_id = add_note_from_draft(col, draft)
+        except PictureDownloadError as exc:
+            title = "Image download failed"
+            message = (
+                f"Image download failed while inserting '{draft.query_word}'.\n"
+                f"{exc}\n\n"
+                "Do you want to add the note without the image?"
+            )
+            if not self._ask_user_image_fallback(message, title):
+                return
+            from dataclasses import replace
+
+            draft = replace(draft, picture_url=None, picture_referer=None, picture_thumb_url=None)
+            try:
+                note_id = add_note_from_draft(col, draft)
+            except Exception as retry_exc:
+                showWarning(str(retry_exc))
+                return
         except Exception as exc:
             showWarning(str(exc))
             return
@@ -1073,6 +1091,17 @@ class FetchDialog(QDialog):
         if open_editor:
             self._open_browser(note_id)
         self.accept()
+
+    def _ask_user_image_fallback(self, message: str, title: str) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle(title)
+        dialog.setText(message)
+        add_without_image_button = dialog.addButton("Add without image", QMessageBox.ButtonRole.AcceptRole)
+        skip_button = dialog.addButton("Skip adding", QMessageBox.ButtonRole.RejectRole)
+        dialog.setDefaultButton(add_without_image_button)
+        dialog.setEscapeButton(skip_button)
+        dialog.exec()
+        return dialog.clickedButton() == add_without_image_button
 
     # ---------- Dialect helpers ----------
     def _choose_audio(self, audio_map: Dict[str, str]) -> Optional[str]:

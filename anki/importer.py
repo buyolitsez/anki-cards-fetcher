@@ -3,11 +3,16 @@ from __future__ import annotations
 from typing import Iterable, List
 
 from ..core.types import NoteDraft
+from ..exceptions import MediaDownloadError
 from ..media import download_to_media
 from ..ui.duplicate_utils import find_duplicate_note_ids
 
 
 class DraftImportError(RuntimeError):
+    pass
+
+
+class PictureDownloadError(DraftImportError):
     pass
 
 
@@ -81,12 +86,15 @@ def add_note_from_draft(col, draft: NoteDraft) -> int:
         filename, _ = download_to_media(draft.audio_url)
         _append_to_fields(note, draft.audio_field_names, f"[sound:{filename}]")
     if draft.picture_url:
-        filename, _ = download_to_media(
-            draft.picture_url,
-            referer=draft.picture_referer,
-            fallback_url=draft.picture_thumb_url,
-            fallback_referer=draft.picture_referer,
-        )
+        try:
+            filename, _ = download_to_media(
+                draft.picture_url,
+                referer=draft.picture_referer,
+                fallback_url=draft.picture_thumb_url,
+                fallback_referer=draft.picture_referer,
+            )
+        except MediaDownloadError as exc:
+            raise PictureDownloadError(f"Failed to download image for '{draft.query_word}': {exc}") from exc
         _append_to_fields(note, draft.picture_field_names, f'<img src="{filename}">')
 
     try:
