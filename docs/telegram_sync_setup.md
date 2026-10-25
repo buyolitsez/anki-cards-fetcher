@@ -26,7 +26,7 @@ The server does not run an Anki collection. Desktop Anki remains the only writer
 
 ## 3. Prepare the server
 
-Example target: Ubuntu 24.04 on `165.22.197.101`.
+Example target: Ubuntu 24.04 server.
 
 Install base packages:
 
@@ -60,6 +60,9 @@ TELEGRAM_ALLOWED_USER_IDS=123456789
 PAIR_BOOTSTRAP_TOKEN=choose-a-long-random-string
 DATABASE_URL=sqlite:////opt/cambridge_fetch/data/app.db
 PUBLIC_BASE_URL=https://anki-sync.example.com
+# Optional: Claude connector, see section 13
+MCP_PATH_TOKEN=another-long-random-string
+MCP_ALLOWED_HOSTS=anki-sync.example.com
 ```
 
 Notes:
@@ -202,3 +205,26 @@ This creates `dist/cambridge_fetch.ankiaddon`.
 - Keep the bot token and bootstrap token only on the server and your personal desktop.
 - Keep `TELEGRAM_ALLOWED_USER_IDS` restricted to your own Telegram id.
 - The public `.ankiaddon` should be built with `build_ankiaddon.sh`, not by zipping the whole repo.
+
+## 13. Claude connector (MCP)
+
+The API can also serve a remote MCP server, so Claude can queue cards the same way the Telegram bot does:
+ask Claude to explain a word, then say "add it to Anki" (optionally with where you saw it).
+
+1. Install the extra: `pip install -e '.[server,telegram]'` (the `server` extra includes `mcp`).
+2. Set `MCP_PATH_TOKEN` in `.env` to a long random string (`python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`).
+   The token is part of the URL and is the only credential, so keep the URL private.
+3. Set `MCP_ALLOWED_HOSTS` to the public host name (enables Host header checks; leave empty to disable them).
+4. Restart `cambridge-fetch-api.service`. The endpoint is `https://anki-sync.example.com/mcp/<MCP_PATH_TOKEN>`.
+   Claude only connects over HTTPS, so put Caddy in front of the API (section 7).
+5. In Claude: Settings -> Connectors -> Add custom connector, paste that URL, no OAuth.
+
+Tools:
+
+- `add_to_anki(word, context?, meaning?, sense_index?, preset_id?, allow_duplicate?)`: fetches the word with the preset's
+  sources, picks the sense that matches `meaning`, puts `context` in front of the examples (or into fields mapped as
+  `context`), refuses duplicates already in Anki or in the queue. Words unknown to the dictionaries are added with
+  `meaning` as the definition.
+- `lookup_word(word)`: senses and duplicate status, queues nothing.
+- `recent_cards(limit)`: cards queued from Claude and whether desktop Anki imported them.
+- `cancel_card(queue_id)`: drop a card that is still pending.
