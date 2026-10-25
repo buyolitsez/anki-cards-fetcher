@@ -26,7 +26,7 @@ The server does not run an Anki collection. Desktop Anki remains the only writer
 
 ## 3. Prepare the server
 
-Example target: Ubuntu 24.04 on `165.22.197.101`.
+Example target: Ubuntu 24.04 server.
 
 Install base packages:
 
