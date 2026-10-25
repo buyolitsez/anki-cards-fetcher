@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -26,7 +27,21 @@ def create_app(
 ) -> FastAPI:
     settings = settings or ServerSettings.from_env()
     repository = repository or Repository(settings.sqlite_path)
-    app = FastAPI(title="Cambridge Fetch Telegram Sync API", version="1.0")
+    mcp_app = None
+    lifespan = None
+    if settings.mcp_path_token:
+        # Imported lazily so the API still runs where the `mcp` extra is not installed.
+        from .mcp_server import create_mcp
+
+        mcp = create_mcp(repository, allowed_hosts=list(settings.mcp_allowed_hosts))
+        mcp_app = mcp.streamable_http_app()
+
+        @contextlib.asynccontextmanager
+        async def lifespan(_app):
+            async with mcp.session_manager.run():
+                yield
+
+    app = FastAPI(title="Cambridge Fetch Telegram Sync API", version="1.0", lifespan=lifespan)
 
     def bearer_token(authorization: Annotated[str | None, Header()] = None) -> str:
         if not authorization or not authorization.startswith("Bearer "):
@@ -81,7 +96,28 @@ def create_app(
 
     app.state.settings = settings
     app.state.repository = repository
+    if mcp_app is not None:
+        # The secret path is the connector's credential: claude.ai custom connectors are added by URL.
+        app.mount("/", _SecretPathMcp(mcp_app, f"/mcp/{settings.mcp_path_token}"))
     return app
+
+
+class _SecretPathMcp:
+    """Serve the MCP app at a secret path and answer 404 for every other unmatched path."""
+
+    def __init__(self, mcp_app, secret_path: str):
+        self.mcp_app = mcp_app
+        self.secret_path = secret_path
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return
+        full_path = scope.get("root_path", "") + scope["path"]
+        if full_path.rstrip("/") != self.secret_path:
+            await send({"type": "http.response.start", "status": 404, "headers": [(b"content-type", b"text/plain")]})
+            await send({"type": "http.response.body", "body": b"Not Found"})
+            return
+        await self.mcp_app({**scope, "path": "/mcp", "raw_path": b"/mcp", "root_path": ""}, receive, send)
 
 
 app = create_app()

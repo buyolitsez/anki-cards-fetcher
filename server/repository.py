@@ -200,17 +200,67 @@ class Repository:
             ).fetchone()
         return dict(row) if row else {}
 
-    def enqueue_draft(self, *, client_id: int, telegram_user_id: int, draft: NoteDraft) -> Dict:
+    def enqueue_draft(self, *, client_id: int, telegram_user_id: int | str, draft: NoteDraft) -> Dict:
         with self._connect() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO pending_note_drafts (client_id, telegram_user_id, draft_json)
                 VALUES (?, ?, ?)
                 """,
-                (client_id, str(int(telegram_user_id)), json.dumps(draft.to_dict())),
+                (client_id, str(telegram_user_id), json.dumps(draft.to_dict())),
             )
             item_id = int(cur.lastrowid)
         return {"id": item_id, "status": "pending"}
+
+    def recent_drafts(self, telegram_user_id: int | str, limit: int) -> List[Dict]:
+        safe_limit = max(1, min(int(limit or 10), 100))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, status, draft_json, failure_reason, created_at, updated_at
+                FROM pending_note_drafts
+                WHERE telegram_user_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (str(telegram_user_id), safe_limit),
+            ).fetchall()
+        out: List[Dict] = []
+        for row in rows:
+            draft = json.loads(row["draft_json"])
+            out.append(
+                {
+                    "id": int(row["id"]),
+                    "status": row["status"],
+                    "word": draft.get("query_word"),
+                    "deck": draft.get("deck_name"),
+                    "definition": draft.get("definition"),
+                    "failure_reason": row["failure_reason"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return out
+
+    def pending_duplicate_keys(self, client_id: int) -> set[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT draft_json FROM pending_note_drafts WHERE client_id = ? AND status = 'pending'",
+                (int(client_id),),
+            ).fetchall()
+        return {str(json.loads(row["draft_json"]).get("duplicate_key") or "") for row in rows} - {""}
+
+    def cancel_pending(self, telegram_user_id: int | str, item_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE pending_note_drafts
+                SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND telegram_user_id = ? AND status = 'pending'
+                """,
+                (int(item_id), str(telegram_user_id)),
+            )
+        return cur.rowcount > 0
 
     def list_pending(self, device_token: str, limit: int) -> List[Dict]:
         client = self.client_by_token(device_token)
