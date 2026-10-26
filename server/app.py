@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -99,7 +100,23 @@ def create_app(
     if mcp_app is not None:
         # The secret path is the connector's credential: claude.ai custom connectors are added by URL.
         app.mount("/", _SecretPathMcp(mcp_app, f"/mcp/{settings.mcp_path_token}"))
+        logging.getLogger("uvicorn.access").addFilter(_RedactFilter(settings.mcp_path_token))
     return app
+
+
+class _RedactFilter(logging.Filter):
+    """Hide the connector's secret path token from access logs."""
+
+    def __init__(self, secret: str):
+        super().__init__()
+        self.secret = secret
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                arg.replace(self.secret, "***") if isinstance(arg, str) else arg for arg in record.args
+            )
+        return True
 
 
 class _SecretPathMcp:
