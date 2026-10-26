@@ -177,3 +177,16 @@ def test_mcp_disabled_without_token(repo, tmp_path):
     app = create_app(settings=_settings(tmp_path, ""), repository=repo)
     with TestClient(app) as client:
         assert client.post("/mcp/anything", json={}).status_code == 404
+
+
+def test_access_log_hides_secret_path(repo, tmp_path):
+    import logging
+
+    create_app(settings=_settings(tmp_path, "s3cret"), repository=repo)
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 0, '%s - "%s %s HTTP/%s" %d',
+        ("1.2.3.4", "POST", "/mcp/s3cret", "1.1", 200), None,
+    )
+    for log_filter in logging.getLogger("uvicorn.access").filters:
+        log_filter.filter(record)
+    assert "s3cret" not in record.getMessage()
